@@ -46,3 +46,10 @@ pub fn round_tags(message_type: &str, round_id: &str) -> Vec<Tag> {
         Tag::custom(TagKind::custom("round_id"), [round_id]),
     ]
 }
+
+pub fn round_tags_with_event_ref(message_type: &str, event_id: &EventId) -> Vec<Tag> {
+    vec![
+        Tag::hashtag(message_type),
+        Tag::custom(TagKind::custom("e"), [event_id.to_string()]),
+    ]
+}

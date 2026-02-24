@@ -3,6 +3,7 @@ pub mod message;
 pub mod transport;
 
 pub use matchers::{
+    event_has_event_reference,
     event_has_message_type,
     event_has_message_version,
     event_has_round_id,

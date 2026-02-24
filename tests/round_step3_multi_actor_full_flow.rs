@@ -3,7 +3,7 @@ use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START,
     NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
     OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_has_message_type,
-    event_has_message_version, event_has_round_id, event_is_openark_kind_150,
+    event_has_event_reference, event_has_message_version, event_has_round_id, event_is_openark_kind_150,
     parse_new_round_initiate_payload,
 };
 use std::time::Duration;
@@ -18,7 +18,7 @@ struct NamedUser {
     user: OpenArkUser,
 }
 
-fn assert_round_event(event: &Event, message_type: &str) {
+fn assert_round_event(event: &Event, message_type: &str, round_ref: Option<&nostr_sdk::prelude::EventId>) {
     assert!(event_is_openark_kind_150(event));
     assert!(event_has_message_type(event, message_type));
     if message_type == NEW_ROUND_INITIATE {
@@ -27,6 +27,9 @@ fn assert_round_event(event: &Event, message_type: &str) {
             .expect("initiate payload should parse");
         assert_eq!(payload.closing_block, 910000);
         assert_eq!(payload.recycled_block, 910144);
+    } else if message_type == NEW_ROUND_JOIN {
+        let round_ref = round_ref.expect("round ref should be set");
+        assert!(event_has_event_reference(event, round_ref));
     } else {
         assert!(event_has_round_id(event, ROUND_ID));
     }
@@ -68,6 +71,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         .await
         .expect("provider should send new_round_initiate");
     println!("[Steve] published {NEW_ROUND_INITIATE}");
+    let mut round_ref: Option<nostr_sdk::prelude::EventId> = None;
 
     for named in &users {
         let initiate = named
@@ -77,7 +81,13 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .expect("user should wait for initiate")
             .expect("user should receive initiate");
         trace.event(named.name, "received initiate", &initiate);
-        assert_round_event(&initiate, NEW_ROUND_INITIATE);
+        assert_round_event(&initiate, NEW_ROUND_INITIATE, None);
+        if let Some(existing) = round_ref.as_ref() {
+            assert_eq!(existing, &initiate.id);
+        } else {
+            round_ref = Some(initiate.id);
+        }
+        let round_ref = round_ref.as_ref().expect("round ref should be present");
 
         let join_payload = format!(
             "round_id={ROUND_ID};onboard=VTXO_ROOT;transition=VTXO_ROOT_SIGNATURE_{name};actor={name}",
@@ -85,17 +95,17 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         );
         named
             .user
-            .send_new_round_join(ROUND_ID, &join_payload)
+            .send_new_round_join(round_ref, &join_payload)
             .await
             .expect("user should send join");
         println!("[{}] published {NEW_ROUND_JOIN}", named.name);
         let join = provider
-            .wait_for_new_round_join_event(named.user.pubkey, ROUND_ID, Duration::from_secs(10))
+            .wait_for_new_round_join_event(named.user.pubkey, round_ref, Duration::from_secs(10))
             .await
             .expect("provider should wait for join")
             .expect("provider should receive join");
         trace.event("Steve", &format!("received join from {}", named.name), &join);
-        assert_round_event(&join, NEW_ROUND_JOIN);
+        assert_round_event(&join, NEW_ROUND_JOIN, Some(round_ref));
         announcement_joins += 1;
     }
     assert_eq!(announcement_joins, users.len());
@@ -124,7 +134,11 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .expect("user should wait for proposal")
             .expect("user should receive proposal");
         trace.event(named.name, "received proposal", &proposal);
-        assert_round_event(&proposal, NEW_ROUND_VTXO_TREE_PROPOSAL);
+        assert_round_event(
+            &proposal,
+            NEW_ROUND_VTXO_TREE_PROPOSAL,
+            Some(round_ref.as_ref().expect("round ref should be present")),
+        );
 
         let accept_payload = format!(
             "round_id={ROUND_ID};vtxo_tree_signatures=VTXO_ROOT_SIGNATURE_{name};actor={name}",
@@ -146,7 +160,11 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .expect("provider should wait for accept")
             .expect("provider should receive accept");
         trace.event("Steve", &format!("received accept from {}", named.name), &accept);
-        assert_round_event(&accept, NEW_ROUND_VTXO_TREE_ACCEPT);
+        assert_round_event(
+            &accept,
+            NEW_ROUND_VTXO_TREE_ACCEPT,
+            Some(round_ref.as_ref().expect("round ref should be present")),
+        );
         tree_accepts += 1;
     }
     assert_eq!(tree_accepts, users.len());
@@ -175,7 +193,11 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .expect("user should wait for prepare_start")
             .expect("user should receive prepare_start");
         trace.event(named.name, "received prepare_start", &prepare_start);
-        assert_round_event(&prepare_start, NEW_ROUND_PREPARE_START);
+        assert_round_event(
+            &prepare_start,
+            NEW_ROUND_PREPARE_START,
+            Some(round_ref.as_ref().expect("round ref should be present")),
+        );
 
         let prepared_payload = format!(
             "round_id={ROUND_ID};forfeit_sig=FORFEIT_SIG_{name};recycle_sig=RECYCLE_SIG_{name};root_sig=VTXO_ROOT_SIGNATURE_{name};actor={name}",
@@ -201,7 +223,11 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             &format!("received start_prepared from {}", named.name),
             &prepared,
         );
-        assert_round_event(&prepared, NEW_ROUND_START_PREPARED);
+        assert_round_event(
+            &prepared,
+            NEW_ROUND_START_PREPARED,
+            Some(round_ref.as_ref().expect("round ref should be present")),
+        );
         prepared_signals += 1;
     }
     assert_eq!(prepared_signals, users.len());
@@ -226,7 +252,11 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .expect("user should wait for round_start")
             .expect("user should receive round_start");
         trace.event(named.name, "received round_start", &start);
-        assert_round_event(&start, NEW_ROUND_START);
+        assert_round_event(
+            &start,
+            NEW_ROUND_START,
+            Some(round_ref.as_ref().expect("round ref should be present")),
+        );
         activated_receipts += 1;
     }
     assert_eq!(activated_receipts, users.len());

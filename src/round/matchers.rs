@@ -22,10 +22,24 @@ pub fn event_has_message_version(event: &Event, expected_version: &str) -> bool 
         .unwrap_or(false)
 }
 
+pub fn event_has_event_reference(event: &Event, expected_event_id: &EventId) -> bool {
+    event_event_reference(event)
+        .map(|v| v == expected_event_id.to_string())
+        .unwrap_or(false)
+}
+
 pub fn event_has_round_id(event: &Event, expected_round_id: &str) -> bool {
     event_round_id(event)
         .map(|v| v == expected_round_id)
         .unwrap_or(false)
+}
+
+pub fn event_event_reference(event: &Event) -> Option<String> {
+    event
+        .tags
+        .find(TagKind::custom("e"))
+        .and_then(|tag| tag.content())
+        .map(ToOwned::to_owned)
 }
 
 pub fn event_round_id(event: &Event) -> Option<String> {

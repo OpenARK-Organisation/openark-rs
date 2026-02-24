@@ -1,14 +1,20 @@
 use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START_PREPARED,
     NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL, OpenArkServiceProvider, OpenArkUser,
-    ROUND_MESSAGE_VERSION, event_has_message_type, event_has_message_version, event_has_round_id,
-    event_is_openark_kind_150, parse_new_round_initiate_payload,
+    ROUND_MESSAGE_VERSION, event_has_event_reference, event_has_message_type,
+    event_has_message_version, event_has_round_id, event_is_openark_kind_150,
+    parse_new_round_initiate_payload,
 };
 use std::time::Duration;
 mod support;
 use support::{TraceRecorder, start_relay};
 
-fn assert_round_event(event: &nostr_sdk::prelude::Event, message_type: &str, round_id: &str) {
+fn assert_round_event(
+    event: &nostr_sdk::prelude::Event,
+    message_type: &str,
+    round_id: &str,
+    round_ref: Option<&nostr_sdk::prelude::EventId>,
+) {
     assert!(event_is_openark_kind_150(event));
     assert!(event_has_message_type(event, message_type));
     if message_type == NEW_ROUND_INITIATE {
@@ -17,6 +23,9 @@ fn assert_round_event(event: &nostr_sdk::prelude::Event, message_type: &str, rou
             .expect("initiate payload should parse");
         assert_eq!(payload.closing_block, 910000);
         assert_eq!(payload.recycled_block, 910144);
+    } else if message_type == NEW_ROUND_JOIN {
+        let round_ref = round_ref.expect("round ref should be set");
+        assert!(event_has_event_reference(event, round_ref));
     } else {
         assert!(event_has_round_id(event, round_id));
     }
@@ -54,6 +63,7 @@ async fn failure_missing_new_round_join_blocks_phase() {
         .expect("initiate send");
     println!("[Steve] published {NEW_ROUND_INITIATE}");
 
+    let mut round_ref: Option<nostr_sdk::prelude::EventId> = None;
     for (name, user) in [(&"Alice", &alice), (&"Bob", &bob), (&"Carol", &carol)] {
         let initiate = user
             .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
@@ -61,18 +71,24 @@ async fn failure_missing_new_round_join_blocks_phase() {
             .expect("wait initiate")
             .expect("receive initiate");
         println!("[{name}] received initiate id={}", initiate.id);
-        assert_round_event(&initiate, NEW_ROUND_INITIATE, ROUND_ID);
+        assert_round_event(&initiate, NEW_ROUND_INITIATE, ROUND_ID, None);
+        if let Some(existing) = round_ref.as_ref() {
+            assert_eq!(existing, &initiate.id);
+        } else {
+            round_ref = Some(initiate.id);
+        }
     }
+    let round_ref = round_ref.expect("round ref should be present");
 
     alice
         .send_new_round_join(
-            ROUND_ID,
+            &round_ref,
             "round_id=r-2026-02-24-004-a;transition=VTXO_ROOT_SIGNATURE_Alice",
         )
         .await
         .expect("alice join");
     bob.send_new_round_join(
-        ROUND_ID,
+        &round_ref,
         "round_id=r-2026-02-24-004-a;transition=VTXO_ROOT_SIGNATURE_Bob",
     )
     .await
@@ -82,17 +98,17 @@ async fn failure_missing_new_round_join_blocks_phase() {
     let mut joins = 0usize;
     for (name, pubkey) in [(&"Alice", alice.pubkey), (&"Bob", bob.pubkey)] {
         let join = provider
-            .wait_for_new_round_join_event(pubkey, ROUND_ID, Duration::from_secs(5))
+            .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
             .expect("provider wait join")
             .expect("provider receive join");
         println!("[Steve] received join from {name} id={}", join.id);
-        assert_round_event(&join, NEW_ROUND_JOIN, ROUND_ID);
+        assert_round_event(&join, NEW_ROUND_JOIN, ROUND_ID, Some(&round_ref));
         joins += 1;
     }
 
     let missing = provider
-        .wait_for_new_round_join_event(carol.pubkey, ROUND_ID, Duration::from_secs(1))
+        .wait_for_new_round_join_event(carol.pubkey, &round_ref, Duration::from_secs(1))
         .await
         .expect("provider wait missing join");
 
@@ -125,23 +141,31 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         .send_new_round_initiate(910000, 910144)
         .await
         .expect("initiate send");
+    let mut round_ref: Option<nostr_sdk::prelude::EventId> = None;
     for user in [&alice, &bob] {
-        let _ = user
+        let initiate = user
             .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
             .await
             .expect("wait initiate")
             .expect("receive initiate");
+        assert_round_event(&initiate, NEW_ROUND_INITIATE, ROUND_ID, None);
+        if let Some(existing) = round_ref.as_ref() {
+            assert_eq!(existing, &initiate.id);
+        } else {
+            round_ref = Some(initiate.id);
+        }
     }
+    let round_ref = round_ref.expect("round ref should be present");
 
     alice
         .send_new_round_join(
-            ROUND_ID,
+            &round_ref,
             "round_id=r-2026-02-24-004-b;transition=VTXO_ROOT_SIGNATURE_Alice",
         )
         .await
         .expect("alice join");
     bob.send_new_round_join(
-        ROUND_ID,
+        &round_ref,
         "round_id=r-2026-02-24-004-b;transition=VTXO_ROOT_SIGNATURE_Bob",
     )
     .await
@@ -149,7 +173,7 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
 
     for pubkey in [alice.pubkey, bob.pubkey] {
         let _ = provider
-            .wait_for_new_round_join_event(pubkey, ROUND_ID, Duration::from_secs(5))
+            .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
             .expect("provider wait join")
             .expect("provider receive join");
@@ -197,8 +221,18 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         .expect("wait bob accept")
         .expect("receive bob accept");
 
-    assert_round_event(&alice_accept, NEW_ROUND_VTXO_TREE_ACCEPT, ROUND_ID);
-    assert_round_event(&bob_accept, NEW_ROUND_VTXO_TREE_ACCEPT, ROUND_ID);
+    assert_round_event(
+        &alice_accept,
+        NEW_ROUND_VTXO_TREE_ACCEPT,
+        ROUND_ID,
+        Some(&round_ref),
+    );
+    assert_round_event(
+        &bob_accept,
+        NEW_ROUND_VTXO_TREE_ACCEPT,
+        ROUND_ID,
+        Some(&round_ref),
+    );
 
     let mut valid = 0usize;
     if is_valid_accept_payload(&alice_accept.content) {
@@ -236,30 +270,38 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
         .send_new_round_initiate(910000, 910144)
         .await
         .expect("initiate send");
+    let mut round_ref: Option<nostr_sdk::prelude::EventId> = None;
     for user in [&alice, &bob] {
-        let _ = user
+        let initiate = user
             .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
             .await
             .expect("wait initiate")
             .expect("receive initiate");
+        assert_round_event(&initiate, NEW_ROUND_INITIATE, ROUND_ID, None);
+        if let Some(existing) = round_ref.as_ref() {
+            assert_eq!(existing, &initiate.id);
+        } else {
+            round_ref = Some(initiate.id);
+        }
     }
+    let round_ref = round_ref.expect("round ref should be present");
 
     alice
         .send_new_round_join(
-            ROUND_ID,
+            &round_ref,
             "round_id=r-2026-02-24-004-c;transition=VTXO_ROOT_SIGNATURE_Alice",
         )
         .await
         .expect("alice join");
     bob.send_new_round_join(
-        ROUND_ID,
+        &round_ref,
         "round_id=r-2026-02-24-004-c;transition=VTXO_ROOT_SIGNATURE_Bob",
     )
     .await
     .expect("bob join");
     for pubkey in [alice.pubkey, bob.pubkey] {
         let _ = provider
-            .wait_for_new_round_join_event(pubkey, ROUND_ID, Duration::from_secs(5))
+            .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
             .expect("provider wait join")
             .expect("provider receive join");
@@ -337,8 +379,8 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
         .expect("wait bob prepared")
         .expect("receive bob prepared");
 
-    assert_round_event(&alice_prepared, NEW_ROUND_START_PREPARED, ROUND_ID);
-    assert_round_event(&bob_prepared, NEW_ROUND_START_PREPARED, ROUND_ID);
+    assert_round_event(&alice_prepared, NEW_ROUND_START_PREPARED, ROUND_ID, Some(&round_ref));
+    assert_round_event(&bob_prepared, NEW_ROUND_START_PREPARED, ROUND_ID, Some(&round_ref));
 
     let mut valid = 0usize;
     if is_valid_prepared_payload(&alice_prepared.content) {
@@ -376,30 +418,38 @@ async fn failure_late_start_prepared_blocks_activation() {
         .send_new_round_initiate(910000, 910144)
         .await
         .expect("initiate send");
+    let mut round_ref: Option<nostr_sdk::prelude::EventId> = None;
     for user in [&alice, &bob] {
-        let _ = user
+        let initiate = user
             .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
             .await
             .expect("wait initiate")
             .expect("receive initiate");
+        assert_round_event(&initiate, NEW_ROUND_INITIATE, ROUND_ID, None);
+        if let Some(existing) = round_ref.as_ref() {
+            assert_eq!(existing, &initiate.id);
+        } else {
+            round_ref = Some(initiate.id);
+        }
     }
+    let round_ref = round_ref.expect("round ref should be present");
 
     alice
         .send_new_round_join(
-            ROUND_ID,
+            &round_ref,
             "round_id=r-2026-02-24-004-d;transition=VTXO_ROOT_SIGNATURE_Alice",
         )
         .await
         .expect("alice join");
     bob.send_new_round_join(
-        ROUND_ID,
+        &round_ref,
         "round_id=r-2026-02-24-004-d;transition=VTXO_ROOT_SIGNATURE_Bob",
     )
     .await
     .expect("bob join");
     for pubkey in [alice.pubkey, bob.pubkey] {
         let _ = provider
-            .wait_for_new_round_join_event(pubkey, ROUND_ID, Duration::from_secs(5))
+            .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
             .expect("wait join")
             .expect("receive join");
@@ -474,7 +524,7 @@ async fn failure_late_start_prepared_blocks_activation() {
         .await
         .expect("wait alice prepared")
         .expect("receive alice prepared");
-    assert_round_event(&alice_prepared, NEW_ROUND_START_PREPARED, ROUND_ID);
+    assert_round_event(&alice_prepared, NEW_ROUND_START_PREPARED, ROUND_ID, Some(&round_ref));
 
     let bob_timeout = provider
         .wait_for_new_round_start_prepared_event(bob.pubkey, ROUND_ID, Duration::from_secs(1))

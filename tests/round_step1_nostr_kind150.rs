@@ -1,6 +1,6 @@
 use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, OpenArkServiceProvider, OpenArkUser, event_has_message_type,
-    event_has_message_version, event_has_round_id, event_is_openark_kind_150,
+    event_has_event_reference, event_has_message_version, event_is_openark_kind_150,
     parse_new_round_initiate_payload, ROUND_MESSAGE_VERSION,
 };
 use std::time::Duration;
@@ -49,10 +49,11 @@ async fn step1_two_actor_kind150_round_handshake() {
         .expect("initiate payload should parse");
     assert_eq!(initiate_payload.closing_block, 910000);
     assert_eq!(initiate_payload.recycled_block, 910144);
+    let round_ref = initiate.id;
 
     println!("[Alice] publishing {NEW_ROUND_JOIN} round_id={ROUND_ID}");
     user.send_new_round_join(
-        ROUND_ID,
+        &round_ref,
         "round_id=r-2026-02-24-001;transition=VTXO_ROOT_SIGNATURE;actor=Alice",
     )
     .await
@@ -61,7 +62,7 @@ async fn step1_two_actor_kind150_round_handshake() {
 
     println!("[Steve] waiting for {NEW_ROUND_JOIN} from Alice");
     let join = provider
-        .wait_for_new_round_join_event(user.pubkey, ROUND_ID, Duration::from_secs(10))
+        .wait_for_new_round_join_event(user.pubkey, &round_ref, Duration::from_secs(10))
         .await
         .expect("provider should wait for new_round_join")
         .expect("provider should receive new_round_join");
@@ -69,7 +70,7 @@ async fn step1_two_actor_kind150_round_handshake() {
     println!("[Steve] validating join assertions");
     assert!(event_is_openark_kind_150(&join));
     assert!(event_has_message_type(&join, NEW_ROUND_JOIN));
-    assert!(event_has_round_id(&join, ROUND_ID));
+    assert!(event_has_event_reference(&join, &round_ref));
     assert!(join.content.contains("VTXO_ROOT_SIGNATURE"));
     println!("[test] step1_two_actor_kind150_round_handshake passed");
     trace.finish(
