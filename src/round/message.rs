@@ -21,6 +21,30 @@ pub struct NewRoundInitiatePayload {
     pub recycled_block: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewRoundJoinOnboard {
+    pub outpoint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewRoundJoinOffboard {
+    pub address: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewRoundJoinKeys {
+    pub user_pubkey: String,
+    pub agent_pubkey: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewRoundJoinPayload {
+    pub onboard: Vec<NewRoundJoinOnboard>,
+    pub offboard: Vec<NewRoundJoinOffboard>,
+    pub keys: NewRoundJoinKeys,
+    pub address_of_last_resort: Option<String>,
+}
+
 pub fn new_round_initiate_tags() -> Vec<Tag> {
     vec![
         Tag::hashtag(NEW_ROUND_INITIATE),

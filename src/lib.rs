@@ -4,6 +4,10 @@ pub mod wallet;
 
 pub use actors::{OpenArkServiceProvider, OpenArkUser};
 pub use round::{
+    NewRoundJoinKeys,
+    NewRoundJoinOffboard,
+    NewRoundJoinOnboard,
+    NewRoundJoinPayload,
     NEW_ROUND_INITIATE,
     NEW_ROUND_JOIN,
     NEW_ROUND_PREPARE_START,

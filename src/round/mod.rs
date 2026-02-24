@@ -14,6 +14,10 @@ pub use matchers::{
     validate_new_round_join_event_reference,
 };
 pub use message::{
+    NewRoundJoinKeys,
+    NewRoundJoinOffboard,
+    NewRoundJoinOnboard,
+    NewRoundJoinPayload,
     NewRoundInitiatePayload,
     NEW_ROUND_INITIATE,
     NEW_ROUND_JOIN,
