@@ -38,6 +38,7 @@ pub struct TraceRecorder {
     started_ms: u128,
 }
 
+#[allow(dead_code)]
 impl TraceRecorder {
     pub fn new(test_name: &str, round_id: Option<&str>) -> Self {
         Self {
