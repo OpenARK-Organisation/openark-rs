@@ -4,7 +4,8 @@ use openark_rs::{
     NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
     OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_has_message_type,
     event_has_event_reference, event_has_message_version, event_has_round_id, event_is_openark_kind_150,
-    parse_new_round_initiate_payload,
+    parse_new_round_initiate_payload, validate_new_round_initiate_event,
+    validate_new_round_join_event_reference,
 };
 use std::time::Duration;
 mod support;
@@ -17,6 +18,7 @@ fn assert_round_event(event: &Event, message_type: &str, round_ref: Option<&nost
     assert!(event_has_message_type(event, message_type));
     if message_type == NEW_ROUND_INITIATE {
         assert!(event_has_message_version(event, ROUND_MESSAGE_VERSION));
+        assert!(validate_new_round_initiate_event(event).is_ok());
         let payload = parse_new_round_initiate_payload(&event.content)
             .expect("initiate payload should parse");
         assert_eq!(payload.closing_block, 910000);
@@ -24,6 +26,7 @@ fn assert_round_event(event: &Event, message_type: &str, round_ref: Option<&nost
     } else if message_type == NEW_ROUND_JOIN {
         let round_ref = round_ref.expect("round ref should be set");
         assert!(event_has_event_reference(event, round_ref));
+        assert!(validate_new_round_join_event_reference(event, round_ref).is_ok());
     } else {
         assert!(event_has_round_id(event, ROUND_ID));
     }

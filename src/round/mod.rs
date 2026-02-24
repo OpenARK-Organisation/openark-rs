@@ -9,6 +9,8 @@ pub use matchers::{
     event_has_round_id,
     event_is_openark_kind_150,
     event_round_id,
+    validate_new_round_initiate_event,
+    validate_new_round_join_event_reference,
 };
 pub use message::{
     NewRoundInitiatePayload,

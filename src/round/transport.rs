@@ -2,11 +2,12 @@ use nostr_sdk::prelude::*;
 use std::time::Duration;
 
 use super::matchers::{
-    event_has_event_reference, event_has_message_type, event_has_message_version, event_has_round_id,
+    event_has_message_type, event_has_round_id, validate_new_round_initiate_event,
+    validate_new_round_join_event_reference,
 };
 use super::message::{
-    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, ROUND_MESSAGE_VERSION, new_round_initiate_event_builder,
-    new_round_join_event_builder, openark_round_kind, parse_new_round_initiate_payload, round_tags,
+    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, new_round_initiate_event_builder,
+    new_round_join_event_builder, openark_round_kind, round_tags,
 };
 
 pub async fn send_new_round_initiate_message(
@@ -58,9 +59,7 @@ pub async fn wait_for_new_round_initiate_message(
             if let ClientNotification::Event { event, .. } = notification {
                 let event = event.as_ref();
                 if event.pubkey == expected_author
-                    && event_has_message_type(event, NEW_ROUND_INITIATE)
-                    && event_has_message_version(event, ROUND_MESSAGE_VERSION)
-                    && parse_new_round_initiate_payload(&event.content).is_some()
+                    && validate_new_round_initiate_event(event).is_ok()
                 {
                     return Some(event.clone());
                 }
@@ -126,8 +125,8 @@ pub async fn wait_for_new_round_join_message(
             if let ClientNotification::Event { event, .. } = notification {
                 let event = event.as_ref();
                 if event.pubkey == expected_author
-                    && event_has_message_type(event, NEW_ROUND_JOIN)
-                    && event_has_event_reference(event, expected_initiate_event_id)
+                    && validate_new_round_join_event_reference(event, expected_initiate_event_id)
+                        .is_ok()
                 {
                     return Some(event.clone());
                 }

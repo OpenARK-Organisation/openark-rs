@@ -22,6 +22,8 @@ pub use round::{
     new_round_join_event_builder,
     event_round_id,
     parse_new_round_initiate_payload,
+    validate_new_round_initiate_event,
+    validate_new_round_join_event_reference,
 };
 pub use wallet::create_regtest_bdk_wallet;
 

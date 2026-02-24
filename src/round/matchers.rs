@@ -1,6 +1,9 @@
 use nostr_sdk::prelude::*;
 
-use super::message::openark_round_kind;
+use super::message::{
+    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, ROUND_MESSAGE_VERSION, parse_new_round_initiate_payload,
+    openark_round_kind,
+};
 
 pub fn event_is_openark_kind_150(event: &Event) -> bool {
     event.kind == openark_round_kind()
@@ -40,6 +43,38 @@ pub fn event_event_reference(event: &Event) -> Option<String> {
         .find(TagKind::custom("e"))
         .and_then(|tag| tag.content())
         .map(ToOwned::to_owned)
+}
+
+pub fn validate_new_round_initiate_event(event: &Event) -> Result<(), &'static str> {
+    if !event_is_openark_kind_150(event) {
+        return Err("wrong_kind");
+    }
+    if !event_has_message_type(event, NEW_ROUND_INITIATE) {
+        return Err("missing_or_wrong_t");
+    }
+    if !event_has_message_version(event, ROUND_MESSAGE_VERSION) {
+        return Err("missing_or_wrong_v");
+    }
+    if parse_new_round_initiate_payload(&event.content).is_none() {
+        return Err("invalid_initiate_payload");
+    }
+    Ok(())
+}
+
+pub fn validate_new_round_join_event_reference(
+    event: &Event,
+    expected_initiate_event_id: &EventId,
+) -> Result<(), &'static str> {
+    if !event_is_openark_kind_150(event) {
+        return Err("wrong_kind");
+    }
+    if !event_has_message_type(event, NEW_ROUND_JOIN) {
+        return Err("missing_or_wrong_t");
+    }
+    if !event_has_event_reference(event, expected_initiate_event_id) {
+        return Err("missing_or_wrong_e");
+    }
+    Ok(())
 }
 
 pub fn event_round_id(event: &Event) -> Option<String> {

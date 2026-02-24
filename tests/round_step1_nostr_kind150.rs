@@ -1,7 +1,8 @@
 use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, OpenArkServiceProvider, OpenArkUser, event_has_message_type,
     event_has_event_reference, event_has_message_version, event_is_openark_kind_150,
-    parse_new_round_initiate_payload, ROUND_MESSAGE_VERSION,
+    parse_new_round_initiate_payload, validate_new_round_initiate_event,
+    validate_new_round_join_event_reference, ROUND_MESSAGE_VERSION,
 };
 use std::time::Duration;
 mod support;
@@ -45,6 +46,10 @@ async fn step1_two_actor_kind150_round_handshake() {
     assert!(event_is_openark_kind_150(&initiate));
     assert!(event_has_message_type(&initiate, NEW_ROUND_INITIATE));
     assert!(event_has_message_version(&initiate, ROUND_MESSAGE_VERSION));
+    assert!(
+        validate_new_round_initiate_event(&initiate).is_ok(),
+        "initiate event should pass strict validator"
+    );
     let initiate_payload = parse_new_round_initiate_payload(&initiate.content)
         .expect("initiate payload should parse");
     assert_eq!(initiate_payload.closing_block, 910000);
@@ -71,6 +76,10 @@ async fn step1_two_actor_kind150_round_handshake() {
     assert!(event_is_openark_kind_150(&join));
     assert!(event_has_message_type(&join, NEW_ROUND_JOIN));
     assert!(event_has_event_reference(&join, &round_ref));
+    assert!(
+        validate_new_round_join_event_reference(&join, &round_ref).is_ok(),
+        "join event should reference initiate id via e tag"
+    );
     assert!(join.content.contains("VTXO_ROOT_SIGNATURE"));
     println!("[test] step1_two_actor_kind150_round_handshake passed");
     trace.finish(
