@@ -79,12 +79,14 @@ async fn failure_missing_new_round_join_blocks_phase() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
+    let alice_join_payload = canonical_join_payload("Alice");
+    let bob_join_payload = canonical_join_payload("Bob");
 
     alice
-        .send_new_round_join(&round_ref, &canonical_join_payload("Alice"))
+        .send_new_round_join(&round_ref, &alice_join_payload)
         .await
         .expect("alice join");
-    bob.send_new_round_join(&round_ref, &canonical_join_payload("Bob"))
+    bob.send_new_round_join(&round_ref, &bob_join_payload)
         .await
         .expect("bob join");
     println!("[Alice/Bob] published {NEW_ROUND_JOIN}; [Carol] intentionally silent");
@@ -150,12 +152,14 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
+    let alice_join_payload = canonical_join_payload("Alice");
+    let bob_join_payload = canonical_join_payload("Bob");
 
     alice
-        .send_new_round_join(&round_ref, &canonical_join_payload("Alice"))
+        .send_new_round_join(&round_ref, &alice_join_payload)
         .await
         .expect("alice join");
-    bob.send_new_round_join(&round_ref, &canonical_join_payload("Bob"))
+    bob.send_new_round_join(&round_ref, &bob_join_payload)
         .await
         .expect("bob join");
 
@@ -273,12 +277,14 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
+    let alice_join_payload = canonical_join_payload("Alice");
+    let bob_join_payload = canonical_join_payload("Bob");
 
     alice
-        .send_new_round_join(&round_ref, &canonical_join_payload("Alice"))
+        .send_new_round_join(&round_ref, &alice_join_payload)
         .await
         .expect("alice join");
-    bob.send_new_round_join(&round_ref, &canonical_join_payload("Bob"))
+    bob.send_new_round_join(&round_ref, &bob_join_payload)
         .await
         .expect("bob join");
     for pubkey in [alice.pubkey, bob.pubkey] {
@@ -415,12 +421,14 @@ async fn failure_late_start_prepared_blocks_activation() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
+    let alice_join_payload = canonical_join_payload("Alice");
+    let bob_join_payload = canonical_join_payload("Bob");
 
     alice
-        .send_new_round_join(&round_ref, &canonical_join_payload("Alice"))
+        .send_new_round_join(&round_ref, &alice_join_payload)
         .await
         .expect("alice join");
-    bob.send_new_round_join(&round_ref, &canonical_join_payload("Bob"))
+    bob.send_new_round_join(&round_ref, &bob_join_payload)
         .await
         .expect("bob join");
     for pubkey in [alice.pubkey, bob.pubkey] {

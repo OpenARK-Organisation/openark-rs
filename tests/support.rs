@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nostr_sdk::prelude::Event;
+use openark_rs::{NewRoundJoinKeys, NewRoundJoinOffboard, NewRoundJoinOnboard, NewRoundJoinPayload};
 use serde_json::{Value, json};
 use testcontainers::{
     GenericImage,
@@ -30,20 +31,18 @@ pub async fn start_relay() -> (testcontainers::ContainerAsync<GenericImage>, Str
     (container, format!("ws://localhost:{host_port}"))
 }
 
-pub fn canonical_join_payload(actor: &str) -> String {
-    json!({
-        "onboard": [
-            {
-                "outpoint": format!("{}:0", actor.to_lowercase())
-            }
-        ],
-        "offboard": [],
-        "keys": {
-            "user_pubkey": format!("{actor}-user-pubkey"),
-            "agent_pubkey": format!("{actor}-agent-pubkey")
-        }
-    })
-    .to_string()
+pub fn canonical_join_payload(actor: &str) -> NewRoundJoinPayload {
+    NewRoundJoinPayload {
+        onboard: vec![NewRoundJoinOnboard {
+            outpoint: format!("{}:0", actor.to_lowercase()),
+        }],
+        offboard: Vec::<NewRoundJoinOffboard>::new(),
+        keys: NewRoundJoinKeys {
+            user_pubkey: format!("{actor}-user-pubkey"),
+            agent_pubkey: format!("{actor}-agent-pubkey"),
+        },
+        address_of_last_resort: None,
+    }
 }
 
 pub struct TraceRecorder {

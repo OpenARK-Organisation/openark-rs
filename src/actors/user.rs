@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::round::message::{
     NEW_ROUND_PREPARE_START, NEW_ROUND_START, NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT,
-    NEW_ROUND_VTXO_TREE_PROPOSAL,
+    NEW_ROUND_VTXO_TREE_PROPOSAL, NewRoundJoinPayload,
 };
 use crate::round::transport::{
     send_new_round_join_message, send_round_message, wait_for_new_round_initiate_message,
@@ -66,7 +66,11 @@ impl OpenArkUser {
         wait_for_new_round_initiate_message(&self.client, provider_pubkey, timeout).await
     }
 
-    pub async fn send_new_round_join(&self, initiate_event_id: &EventId, payload: &str) -> Result<()> {
+    pub async fn send_new_round_join(
+        &self,
+        initiate_event_id: &EventId,
+        payload: &NewRoundJoinPayload,
+    ) -> Result<()> {
         send_new_round_join_message(&self.client, initiate_event_id, payload).await
     }
 

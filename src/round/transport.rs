@@ -6,8 +6,8 @@ use super::matchers::{
     validate_new_round_join_event_reference,
 };
 use super::message::{
-    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, new_round_initiate_event_builder,
-    new_round_join_event_builder, openark_round_kind, round_tags,
+    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NewRoundJoinPayload, new_round_initiate_event_builder,
+    new_round_join_event_builder, new_round_join_payload_json, openark_round_kind, round_tags,
 };
 
 pub async fn send_new_round_initiate_message(
@@ -43,9 +43,10 @@ pub async fn send_round_message(
 pub async fn send_new_round_join_message(
     client: &Client,
     initiate_event_id: &EventId,
-    payload: &str,
+    payload: &NewRoundJoinPayload,
 ) -> Result<()> {
-    let event = new_round_join_event_builder(initiate_event_id, payload);
+    let payload_json = new_round_join_payload_json(payload);
+    let event = new_round_join_event_builder(initiate_event_id, &payload_json);
     client.send_event_builder(event).await?;
     Ok(())
 }

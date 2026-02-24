@@ -59,7 +59,8 @@ async fn step1_two_actor_kind150_round_handshake() {
     println!("[round] reference={round_ref}");
 
     println!("[Alice] publishing {NEW_ROUND_JOIN} round_id={ROUND_ID}");
-    user.send_new_round_join(&round_ref, &canonical_join_payload("Alice"))
+    let join_payload = canonical_join_payload("Alice");
+    user.send_new_round_join(&round_ref, &join_payload)
         .await
         .expect("user should send new_round_join");
     println!("[Alice] published {NEW_ROUND_JOIN}");
