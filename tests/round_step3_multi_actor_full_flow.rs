@@ -109,9 +109,6 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("user should send join");
         println!("[{}] published {NEW_ROUND_JOIN}", named.name);
-    }
-
-    for named in &users {
         let join = provider
             .wait_for_new_round_join_event(named.user.pubkey, ROUND_ID, Duration::from_secs(10))
             .await
@@ -158,9 +155,6 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("user should send accept");
         println!("[{}] published {NEW_ROUND_VTXO_TREE_ACCEPT}", named.name);
-    }
-
-    for named in &users {
         let accept = provider
             .wait_for_new_round_vtxo_tree_accept_event(
                 named.user.pubkey,
@@ -211,9 +205,6 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("user should send start_prepared");
         println!("[{}] published {NEW_ROUND_START_PREPARED}", named.name);
-    }
-
-    for named in &users {
         let prepared = provider
             .wait_for_new_round_start_prepared_event(
                 named.user.pubkey,
