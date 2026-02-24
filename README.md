@@ -25,9 +25,14 @@ The Phase 1 round announcement flow is strict and uses canonical shapes:
   - tags: `["t","new_round_initiate"]`, `["v","1.0.0"]`
   - content JSON: `{"closing_block": <u64>, "recycled_block": <u64>}`
 - `new_round_join`
-  - tags: `["t","new_round_join"]`, `["e","<initiate_event_id>"]`
-  - content: participant-specific data only (no round/thread duplication in tags)
+  - tags: `["t","new_round_join"]`, `["v","1.0.0"]`, `["e","<initiate_event_id>"]`
+  - content JSON:
+    - `onboard`: array of `{ "outpoint": "<txid:vout>" }`
+    - `offboard`: array of `{ "address": "<bitcoin-address>" }`
+    - `keys`: `{ "user_pubkey": "...", "agent_pubkey": "..." }`
+    - optional `address_of_last_resort`
 
 Notes:
 - The initiate event id is the Phase 1 round reference.
+- `new_round_join` content must be valid JSON and must not include `round_id`.
 - Generic round-id send/wait paths are intentionally blocked for initiate/join.
