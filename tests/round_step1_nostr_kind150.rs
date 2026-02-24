@@ -1,6 +1,7 @@
 use openark_rs::{
-    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, OpenArkServiceProvider, OpenArkUser, event_has_message_type,
-    event_has_event_reference, event_has_message_version, event_is_openark_kind_150,
+    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, OpenArkServiceProvider, OpenArkUser, event_event_reference,
+    event_has_message_type, event_has_event_reference, event_has_message_version,
+    event_is_openark_kind_150,
     parse_new_round_initiate_payload, validate_new_round_initiate_event,
     validate_new_round_join_event_reference, ROUND_MESSAGE_VERSION,
 };
@@ -55,6 +56,7 @@ async fn step1_two_actor_kind150_round_handshake() {
     assert_eq!(initiate_payload.closing_block, 910000);
     assert_eq!(initiate_payload.recycled_block, 910144);
     let round_ref = initiate.id;
+    println!("[round] reference={round_ref}");
 
     println!("[Alice] publishing {NEW_ROUND_JOIN} round_id={ROUND_ID}");
     user.send_new_round_join(
@@ -79,6 +81,10 @@ async fn step1_two_actor_kind150_round_handshake() {
     assert!(
         validate_new_round_join_event_reference(&join, &round_ref).is_ok(),
         "join event should reference initiate id via e tag"
+    );
+    println!(
+        "[round] join_event_reference={}",
+        event_event_reference(&join).expect("join should have e reference")
     );
     assert!(join.content.contains("VTXO_ROOT_SIGNATURE"));
     println!("[test] step1_two_actor_kind150_round_handshake passed");

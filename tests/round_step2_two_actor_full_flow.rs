@@ -2,8 +2,9 @@ use nostr_sdk::prelude::Event;
 use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START,
     NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
-    OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_has_message_type,
-    event_has_event_reference, event_has_message_version, event_has_round_id, event_is_openark_kind_150,
+    OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_event_reference,
+    event_has_message_type, event_has_event_reference, event_has_message_version,
+    event_has_round_id, event_is_openark_kind_150,
     parse_new_round_initiate_payload, validate_new_round_initiate_event,
     validate_new_round_join_event_reference,
 };
@@ -70,6 +71,7 @@ async fn step2_two_actor_kind150_full_phase_flow() {
     trace.event("Alice", "received initiate", &initiate);
     assert_round_event(&initiate, NEW_ROUND_INITIATE, None);
     let round_ref = initiate.id;
+    println!("[round] reference={round_ref}");
     observed_order.push(NEW_ROUND_INITIATE);
 
     user.send_new_round_join(
@@ -87,6 +89,10 @@ async fn step2_two_actor_kind150_full_phase_flow() {
         .expect("provider should receive join");
     trace.event("Steve", "received join", &join);
     assert_round_event(&join, NEW_ROUND_JOIN, Some(&round_ref));
+    println!(
+        "[round] join_event_reference={}",
+        event_event_reference(&join).expect("join should have e reference")
+    );
     assert!(join.content.contains("VTXO_ROOT_SIGNATURE"));
     observed_order.push(NEW_ROUND_JOIN);
 
