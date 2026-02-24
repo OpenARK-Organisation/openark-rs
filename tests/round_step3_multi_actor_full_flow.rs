@@ -5,7 +5,7 @@ use openark_rs::{
     OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_event_reference,
     event_has_message_type, event_has_event_reference, event_has_message_version,
     event_has_round_id, event_is_openark_kind_150,
-    parse_new_round_initiate_payload,
+    parse_new_round_initiate_payload, parse_new_round_join_payload,
 };
 use std::time::Duration;
 mod support;
@@ -105,6 +105,22 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .expect("provider should receive join");
         trace.event("Steve", &format!("received join from {}", named.name), &join);
         assert_round_event(&join, NEW_ROUND_JOIN, Some(round_ref));
+        let join_payload = parse_new_round_join_payload(&join.content)
+            .expect("join payload should parse");
+        assert_eq!(join_payload.onboard.len(), 1);
+        assert_eq!(
+            join_payload.onboard[0].outpoint,
+            format!("{}:0", named.name.to_lowercase())
+        );
+        assert_eq!(join_payload.offboard.len(), 0);
+        assert_eq!(
+            join_payload.keys.user_pubkey,
+            format!("{}-user-pubkey", named.name)
+        );
+        assert_eq!(
+            join_payload.keys.agent_pubkey,
+            format!("{}-agent-pubkey", named.name)
+        );
         println!(
             "[round] join_event_reference={} actor={}",
             event_event_reference(&join).expect("join should have e reference"),

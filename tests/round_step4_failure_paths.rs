@@ -3,7 +3,7 @@ use openark_rs::{
     NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL, OpenArkServiceProvider, OpenArkUser,
     ROUND_MESSAGE_VERSION, event_has_event_reference, event_has_message_type,
     event_has_message_version, event_has_round_id, event_is_openark_kind_150,
-    parse_new_round_initiate_payload,
+    parse_new_round_initiate_payload, parse_new_round_join_payload,
 };
 use std::time::Duration;
 mod support;
@@ -100,6 +100,14 @@ async fn failure_missing_new_round_join_blocks_phase() {
             .expect("provider receive join");
         println!("[Steve] received join from {name} id={}", join.id);
         assert_round_event(&join, NEW_ROUND_JOIN, ROUND_ID, Some(&round_ref));
+        let join_payload = parse_new_round_join_payload(&join.content)
+            .expect("join payload should parse");
+        assert_eq!(join_payload.onboard.len(), 1);
+        assert_eq!(
+            join_payload.onboard[0].outpoint,
+            format!("{}:0", name.to_lowercase())
+        );
+        assert_eq!(join_payload.offboard.len(), 0);
         joins += 1;
     }
 
@@ -164,11 +172,15 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         .expect("bob join");
 
     for pubkey in [alice.pubkey, bob.pubkey] {
-        let _ = provider
+        let join = provider
             .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
             .expect("provider wait join")
             .expect("provider receive join");
+        assert!(
+            parse_new_round_join_payload(&join.content).is_some(),
+            "join payload should parse"
+        );
     }
 
     provider
@@ -288,11 +300,15 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
         .await
         .expect("bob join");
     for pubkey in [alice.pubkey, bob.pubkey] {
-        let _ = provider
+        let join = provider
             .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
             .expect("provider wait join")
             .expect("provider receive join");
+        assert!(
+            parse_new_round_join_payload(&join.content).is_some(),
+            "join payload should parse"
+        );
     }
 
     provider
@@ -432,11 +448,15 @@ async fn failure_late_start_prepared_blocks_activation() {
         .await
         .expect("bob join");
     for pubkey in [alice.pubkey, bob.pubkey] {
-        let _ = provider
+        let join = provider
             .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
             .expect("wait join")
             .expect("receive join");
+        assert!(
+            parse_new_round_join_payload(&join.content).is_some(),
+            "join payload should parse"
+        );
     }
 
     provider

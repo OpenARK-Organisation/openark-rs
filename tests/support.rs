@@ -31,6 +31,7 @@ pub async fn start_relay() -> (testcontainers::ContainerAsync<GenericImage>, Str
     (container, format!("ws://localhost:{host_port}"))
 }
 
+#[allow(dead_code)]
 pub fn canonical_join_payload(actor: &str) -> NewRoundJoinPayload {
     NewRoundJoinPayload {
         onboard: vec![NewRoundJoinOnboard {

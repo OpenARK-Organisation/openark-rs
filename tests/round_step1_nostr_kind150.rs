@@ -84,10 +84,13 @@ async fn step1_two_actor_kind150_round_handshake() {
         "[round] join_event_reference={}",
         event_event_reference(&join).expect("join should have e reference")
     );
-    assert!(
-        parse_new_round_join_payload(&join.content).is_some(),
-        "join content should parse as canonical JSON payload"
-    );
+    let join_payload = parse_new_round_join_payload(&join.content)
+        .expect("join content should parse as canonical JSON payload");
+    assert_eq!(join_payload.onboard.len(), 1);
+    assert_eq!(join_payload.onboard[0].outpoint, "alice:0");
+    assert_eq!(join_payload.offboard.len(), 0);
+    assert_eq!(join_payload.keys.user_pubkey, "Alice-user-pubkey");
+    assert_eq!(join_payload.keys.agent_pubkey, "Alice-agent-pubkey");
     println!("[test] step1_two_actor_kind150_round_handshake passed");
     trace.finish(
         "passed",
