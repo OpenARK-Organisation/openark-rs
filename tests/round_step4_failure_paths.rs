@@ -4,29 +4,8 @@ use openark_rs::{
     event_has_message_type, event_has_round_id, event_is_openark_kind_150,
 };
 use std::time::Duration;
-use testcontainers::{
-    GenericImage,
-    core::{IntoContainerPort, WaitFor},
-    runners::AsyncRunner,
-};
-
-async fn start_relay() -> (testcontainers::ContainerAsync<GenericImage>, String) {
-    println!("[relay] starting strfry test container");
-    let container = GenericImage::new("strfry-strfry", "latest")
-        .with_exposed_port(7777.tcp())
-        .with_wait_for(WaitFor::message_on_stderr("Started websocket server"))
-        .start()
-        .await
-        .expect("Failed to start strfry container");
-
-    let host_port = container
-        .get_host_port_ipv4(7777)
-        .await
-        .expect("Failed to map strfry port");
-
-    println!("[relay] strfry ready on ws://localhost:{host_port}");
-    (container, format!("ws://localhost:{host_port}"))
-}
+mod support;
+use support::{TraceRecorder, start_relay};
 
 fn assert_round_event(event: &nostr_sdk::prelude::Event, message_type: &str, round_id: &str) {
     assert!(event_is_openark_kind_150(event));
@@ -47,6 +26,7 @@ fn is_valid_prepared_payload(content: &str) -> bool {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn failure_missing_new_round_join_blocks_phase() {
     const ROUND_ID: &str = "r-2026-02-24-004-a";
+    let mut trace = TraceRecorder::new("step4_missing_join", Some(ROUND_ID));
     println!("[test] failure_missing_new_round_join_blocks_phase started");
 
     let (_relay_container, relay_url) = start_relay().await;
@@ -110,11 +90,17 @@ async fn failure_missing_new_round_join_blocks_phase() {
     assert!(missing.is_none());
     println!("[Steve] BLOCKED: missing join from Carol before timeout");
     assert_eq!(joins, 2);
+    trace.note("blocked", "missing join from Carol before timeout");
+    trace.finish(
+        "passed",
+        serde_json::json!({"scenario":"missing_join","joins_received":joins}),
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
     const ROUND_ID: &str = "r-2026-02-24-004-b";
+    let mut trace = TraceRecorder::new("step4_invalid_accept", Some(ROUND_ID));
     println!("[test] failure_invalid_vtxo_tree_accept_token_blocks_phase started");
 
     let (_relay_container, relay_url) = start_relay().await;
@@ -215,11 +201,17 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
 
     assert_eq!(valid, 1);
     println!("[Steve] BLOCKED: invalid vtxo_tree_accept payload token detected");
+    trace.note("blocked", "invalid vtxo_tree_accept payload token detected");
+    trace.finish(
+        "passed",
+        serde_json::json!({"scenario":"invalid_accept","valid_accept_count":valid}),
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn failure_invalid_start_prepared_token_blocks_activation() {
     const ROUND_ID: &str = "r-2026-02-24-004-c";
+    let mut trace = TraceRecorder::new("step4_invalid_start_prepared", Some(ROUND_ID));
     println!("[test] failure_invalid_start_prepared_token_blocks_activation started");
 
     let (_relay_container, relay_url) = start_relay().await;
@@ -349,11 +341,17 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
 
     assert_eq!(valid, 1);
     println!("[Steve] BLOCKED: invalid start_prepared payload token detected");
+    trace.note("blocked", "invalid start_prepared payload token detected");
+    trace.finish(
+        "passed",
+        serde_json::json!({"scenario":"invalid_start_prepared","valid_prepared_count":valid}),
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn failure_late_start_prepared_blocks_activation() {
     const ROUND_ID: &str = "r-2026-02-24-004-d";
+    let mut trace = TraceRecorder::new("step4_late_start_prepared", Some(ROUND_ID));
     println!("[test] failure_late_start_prepared_blocks_activation started");
 
     let (_relay_container, relay_url) = start_relay().await;
@@ -476,6 +474,11 @@ async fn failure_late_start_prepared_blocks_activation() {
 
     assert!(bob_timeout.is_none());
     println!("[Steve] BLOCKED: late start_prepared from Bob missed timeout window");
+    trace.note("blocked", "late start_prepared from Bob missed timeout window");
 
     bob_late.await;
+    trace.finish(
+        "passed",
+        serde_json::json!({"scenario":"late_start_prepared","bob_timeout_observed":true}),
+    );
 }

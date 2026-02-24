@@ -6,11 +6,8 @@ use openark_rs::{
     event_is_openark_kind_150,
 };
 use std::time::Duration;
-use testcontainers::{
-    GenericImage,
-    core::{IntoContainerPort, WaitFor},
-    runners::AsyncRunner,
-};
+mod support;
+use support::{TraceRecorder, start_relay};
 
 const ROUND_ID: &str = "r-2026-02-24-003";
 const USERS: [&str; 5] = ["Alice", "Bob", "Carol", "Dave", "Eve"];
@@ -20,39 +17,15 @@ struct NamedUser {
     user: OpenArkUser,
 }
 
-fn log_event(actor: &str, label: &str, event: &Event) {
-    println!(
-        "[{actor}] {label} id={} kind={} pubkey={} tags={:?} content={}",
-        event.id, event.kind, event.pubkey, event.tags, event.content
-    );
-}
-
 fn assert_round_event(event: &Event, message_type: &str) {
     assert!(event_is_openark_kind_150(event));
     assert!(event_has_message_type(event, message_type));
     assert!(event_has_round_id(event, ROUND_ID));
 }
 
-async fn start_relay() -> (testcontainers::ContainerAsync<GenericImage>, String) {
-    println!("[relay] starting strfry test container");
-    let container = GenericImage::new("strfry-strfry", "latest")
-        .with_exposed_port(7777.tcp())
-        .with_wait_for(WaitFor::message_on_stderr("Started websocket server"))
-        .start()
-        .await
-        .expect("Failed to start strfry container");
-
-    let host_port = container
-        .get_host_port_ipv4(7777)
-        .await
-        .expect("Failed to map strfry port");
-
-    println!("[relay] strfry ready on ws://localhost:{host_port}");
-    (container, format!("ws://localhost:{host_port}"))
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn step3_multi_actor_kind150_full_phase_flow() {
+    let mut trace = TraceRecorder::new("round_step3_multi_actor_full_flow", Some(ROUND_ID));
     println!("[test] step3_multi_actor_kind150_full_phase_flow started");
     let (_relay_container, relay_url) = start_relay().await;
     println!("[test] using relay {relay_url}");
@@ -80,6 +53,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     let mut activated_receipts = 0usize;
 
     println!("[phase] Round Announcement");
+    trace.note("round_announcement", "provider publishing initiate");
     provider
         .send_new_round_initiate(
             ROUND_ID,
@@ -96,7 +70,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("user should wait for initiate")
             .expect("user should receive initiate");
-        log_event(named.name, "received initiate", &initiate);
+        trace.event(named.name, "received initiate", &initiate);
         assert_round_event(&initiate, NEW_ROUND_INITIATE);
 
         let join_payload = format!(
@@ -114,7 +88,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("provider should wait for join")
             .expect("provider should receive join");
-        log_event("Steve", &format!("received join from {}", named.name), &join);
+        trace.event("Steve", &format!("received join from {}", named.name), &join);
         assert_round_event(&join, NEW_ROUND_JOIN);
         announcement_joins += 1;
     }
@@ -122,6 +96,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     println!("[phase] Round Announcement complete: joins={announcement_joins}");
 
     println!("[phase] Tree Proposal");
+    trace.note("tree_proposal", "provider publishing proposal");
     provider
         .send_new_round_vtxo_tree_proposal(
             ROUND_ID,
@@ -142,7 +117,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("user should wait for proposal")
             .expect("user should receive proposal");
-        log_event(named.name, "received proposal", &proposal);
+        trace.event(named.name, "received proposal", &proposal);
         assert_round_event(&proposal, NEW_ROUND_VTXO_TREE_PROPOSAL);
 
         let accept_payload = format!(
@@ -164,7 +139,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("provider should wait for accept")
             .expect("provider should receive accept");
-        log_event("Steve", &format!("received accept from {}", named.name), &accept);
+        trace.event("Steve", &format!("received accept from {}", named.name), &accept);
         assert_round_event(&accept, NEW_ROUND_VTXO_TREE_ACCEPT);
         tree_accepts += 1;
     }
@@ -172,6 +147,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     println!("[phase] Tree Proposal complete: accepts={tree_accepts}");
 
     println!("[phase] Start Preparation");
+    trace.note("start_preparation", "provider publishing prepare_start");
     provider
         .send_new_round_prepare_start(
             ROUND_ID,
@@ -192,7 +168,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("user should wait for prepare_start")
             .expect("user should receive prepare_start");
-        log_event(named.name, "received prepare_start", &prepare_start);
+        trace.event(named.name, "received prepare_start", &prepare_start);
         assert_round_event(&prepare_start, NEW_ROUND_PREPARE_START);
 
         let prepared_payload = format!(
@@ -214,7 +190,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("provider should wait for start_prepared")
             .expect("provider should receive start_prepared");
-        log_event(
+        trace.event(
             "Steve",
             &format!("received start_prepared from {}", named.name),
             &prepared,
@@ -226,6 +202,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     println!("[phase] Start Preparation complete: prepared_signals={prepared_signals}");
 
     println!("[phase] Round Activation");
+    trace.note("round_activation", "provider publishing round_start");
     provider
         .send_new_round_start(
             ROUND_ID,
@@ -242,7 +219,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("user should wait for round_start")
             .expect("user should receive round_start");
-        log_event(named.name, "received round_start", &start);
+        trace.event(named.name, "received round_start", &start);
         assert_round_event(&start, NEW_ROUND_START);
         activated_receipts += 1;
     }
@@ -254,4 +231,13 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         users.len()
     );
     println!("[test] step3_multi_actor_kind150_full_phase_flow passed");
+    trace.finish(
+        "passed",
+        serde_json::json!({
+            "announcement_joins": announcement_joins,
+            "tree_accepts": tree_accepts,
+            "prepared_signals": prepared_signals,
+            "activated_receipts": activated_receipts
+        }),
+    );
 }

@@ -42,26 +42,34 @@ Constraints for this phase:
 9. Retested successfully:
    - Step 1, Step 2, Step 3, Step 4 tests
    - full `cargo test -- --nocapture` suite.
+10. Implemented Step 5 repeatability/artifacts:
+   - added shared test support in `tests/support.rs`
+   - added `TraceRecorder` with structured `[trace]` and `[summary]` output
+   - added optional JSON/JSONL artifact output via `OPENARK_TRACE_DIR`
+   - refactored Step 1-4 tests to use shared support + structured summaries.
+11. Retested successfully after Step 5:
+   - full `cargo test --tests -- --nocapture` suite.
 
 ### Checkpoints Created
 - `58e03e0` - Step 1 verbose two-actor kind:150 handshake.
 - `66fde50` - Step 2 full two-actor kind:150 phase flow.
 - `9f3f380` - module refactor + Step 3 multi-actor flow test.
 - `e3f7e62` - plan progress update through Step 3.
+- `f312081` - Step 4 failure-path tests + plan update.
 
 ### In Progress
 - No active implementation in progress.
 
 ## Next Plan
 
-### Step 5: Repeatability/Artifacts
-1. Add structured run summary output (phase result + actor statuses).
-2. Add optional JSONL event trace output for replay/debug.
-3. Keep tests runnable with `--nocapture` and deterministic round ids per scenario.
-4. Decide whether summaries should be emitted by test utility helpers or test-local code.
+### Step 6: Cleanup/Hardening
+1. Reduce per-test `dead_code` warnings caused by shared `tests/support.rs`.
+2. Decide CI/default behavior for `OPENARK_TRACE_DIR` artifact emission.
+3. Optionally add a compact README snippet for running Step 1-5 tests locally.
 
 ## Definition of Done for Current Phase
 - Step 1 through Step 4 passing in CI/local.
+- Step 5 tracing/artifact layer implemented and passing.
 - Shared objects split into separate files.
 - Verbose, readable logs in integration tests.
 - Full test suite green after refactor and failure-path coverage.
