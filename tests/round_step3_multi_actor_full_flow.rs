@@ -14,7 +14,7 @@ use openark_rs::{
 use std::time::Duration;
 mod support;
 use support::{
-    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload,
+    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload, expected_onchain_outpoint,
     canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, start_relay,
 };
 
@@ -123,7 +123,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         assert_eq!(join_payload.onboard.len(), 1);
         assert_eq!(
             join_payload.onboard[0].outpoint,
-            format!("{}:0", named.name.to_lowercase())
+            expected_onchain_outpoint(named.name)
         );
         assert_eq!(join_payload.offboard.len(), 0);
         assert_eq!(

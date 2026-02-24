@@ -25,7 +25,7 @@ fn kind_150() -> Kind {
 }
 
 fn valid_join_payload_json() -> &'static str {
-    r#"{"onboard":[{"outpoint":"alice:0"}],"offboard":[],"keys":{"user_pubkey":"alice-user","agent_pubkey":"alice-agent"}}"#
+    r#"{"onboard":[{"outpoint":"1111111111111111111111111111111111111111111111111111111111111111:0"}],"offboard":[],"keys":{"user_pubkey":"alice-user","agent_pubkey":"alice-agent"}}"#
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -264,7 +264,7 @@ async fn failure_join_missing_keys_or_invalid_outpoint_is_rejected() {
 
     let missing_keys = EventBuilder::new(
         kind_150(),
-        r#"{"onboard":[{"outpoint":"alice:0"}],"offboard":[]}"#,
+        r#"{"onboard":[{"outpoint":"1111111111111111111111111111111111111111111111111111111111111111:0"}],"offboard":[]}"#,
     )
     .tags([
         Tag::hashtag(NEW_ROUND_JOIN),
@@ -333,7 +333,7 @@ async fn failure_join_with_round_id_in_content_is_rejected() {
 
     let forbidden_round_id = EventBuilder::new(
         kind_150(),
-        r#"{"round_id":"legacy","onboard":[{"outpoint":"alice:0"}],"offboard":[],"keys":{"user_pubkey":"u","agent_pubkey":"a"}}"#,
+        r#"{"round_id":"legacy","onboard":[{"outpoint":"1111111111111111111111111111111111111111111111111111111111111111:0"}],"offboard":[],"keys":{"user_pubkey":"u","agent_pubkey":"a"}}"#,
     )
     .tags([
         Tag::hashtag(NEW_ROUND_JOIN),

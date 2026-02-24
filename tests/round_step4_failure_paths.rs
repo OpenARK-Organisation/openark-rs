@@ -11,7 +11,7 @@ use openark_rs::{
 use std::time::Duration;
 mod support;
 use support::{
-    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload,
+    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload, expected_onchain_outpoint,
     canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, start_relay,
 };
 
@@ -135,7 +135,7 @@ async fn failure_missing_new_round_join_blocks_phase() {
         assert_eq!(join_payload.onboard.len(), 1);
         assert_eq!(
             join_payload.onboard[0].outpoint,
-            format!("{}:0", name.to_lowercase())
+            expected_onchain_outpoint(name)
         );
         assert_eq!(join_payload.offboard.len(), 0);
         joins += 1;

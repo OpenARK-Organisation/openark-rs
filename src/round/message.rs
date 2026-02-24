@@ -104,8 +104,12 @@ pub fn parse_new_round_join_payload(content: &str) -> Option<NewRoundJoinPayload
         .as_array()?
         .iter()
         .map(|entry| {
+            let outpoint = entry.get("outpoint")?.as_str()?;
+            if !looks_like_outpoint(outpoint) {
+                return None;
+            }
             Some(NewRoundJoinOnboard {
-                outpoint: entry.get("outpoint")?.as_str()?.to_string(),
+                outpoint: outpoint.to_string(),
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -448,7 +452,7 @@ mod tests {
     fn round_join_payload_json_roundtrips() {
         let payload = NewRoundJoinPayload {
             onboard: vec![NewRoundJoinOnboard {
-                outpoint: "abcd:0".to_string(),
+                outpoint: "1111111111111111111111111111111111111111111111111111111111111111:0".to_string(),
             }],
             offboard: vec![NewRoundJoinOffboard {
                 address: "bc1qexample".to_string(),

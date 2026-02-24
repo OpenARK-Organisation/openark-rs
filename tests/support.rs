@@ -39,7 +39,7 @@ pub async fn start_relay() -> (testcontainers::ContainerAsync<GenericImage>, Str
 pub fn canonical_join_payload(actor: &str) -> NewRoundJoinPayload {
     NewRoundJoinPayload {
         onboard: vec![NewRoundJoinOnboard {
-            outpoint: format!("{}:0", actor.to_lowercase()),
+            outpoint: expected_onchain_outpoint(actor).to_string(),
         }],
         offboard: Vec::<NewRoundJoinOffboard>::new(),
         keys: NewRoundJoinKeys {
@@ -48,6 +48,18 @@ pub fn canonical_join_payload(actor: &str) -> NewRoundJoinPayload {
         },
         address_of_last_resort: None,
     }
+}
+
+pub fn expected_onchain_outpoint(actor: &str) -> String {
+    let txid = match actor {
+        "Alice" => "1111111111111111111111111111111111111111111111111111111111111111",
+        "Bob" => "2222222222222222222222222222222222222222222222222222222222222222",
+        "Carol" => "3333333333333333333333333333333333333333333333333333333333333333",
+        "Dave" => "4444444444444444444444444444444444444444444444444444444444444444",
+        "Eve" => "5555555555555555555555555555555555555555555555555555555555555555",
+        _ => "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+    format!("{txid}:0")
 }
 
 pub const PROPOSAL_VTXO_OUTPOINT_0: &str =

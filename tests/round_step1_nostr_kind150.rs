@@ -7,7 +7,7 @@ use openark_rs::{
 };
 use std::time::Duration;
 mod support;
-use support::{TraceRecorder, canonical_join_payload, start_relay};
+use support::{TraceRecorder, canonical_join_payload, expected_onchain_outpoint, start_relay};
 
 const ROUND_ID: &str = "r-2026-02-24-001";
 
@@ -87,7 +87,7 @@ async fn step1_two_actor_kind150_round_handshake() {
     let join_payload = parse_new_round_join_payload(&join.content)
         .expect("join content should parse as canonical JSON payload");
     assert_eq!(join_payload.onboard.len(), 1);
-    assert_eq!(join_payload.onboard[0].outpoint, "alice:0");
+    assert_eq!(join_payload.onboard[0].outpoint, expected_onchain_outpoint("Alice"));
     assert_eq!(join_payload.offboard.len(), 0);
     assert_eq!(join_payload.keys.user_pubkey, "Alice-user-pubkey");
     assert_eq!(join_payload.keys.agent_pubkey, "Alice-agent-pubkey");
