@@ -6,10 +6,18 @@ use openark_rs::{
     event_has_message_type, event_has_event_reference, event_has_message_version,
     event_has_round_id, event_is_openark_kind_150,
     parse_new_round_initiate_payload, parse_new_round_join_payload,
+    parse_new_round_prepare_start_payload, parse_new_round_start_prepared_payload,
+    parse_new_round_vtxo_tree_accept_payload, parse_new_round_vtxo_tree_proposal_payload,
+    validate_new_round_prepare_start_event, validate_new_round_start_prepared_event,
+    validate_new_round_vtxo_tree_accept_event, validate_new_round_vtxo_tree_proposal_event,
 };
 use std::time::Duration;
 mod support;
-use support::{TraceRecorder, canonical_join_payload, start_relay};
+use support::{
+    TraceRecorder, canonical_join_payload, canonical_prepare_start_payload,
+    canonical_start_prepared_payload, canonical_vtxo_tree_accept_payload,
+    canonical_vtxo_tree_proposal_payload, start_relay,
+};
 
 const ROUND_ID: &str = "r-2026-02-24-003";
 const USERS: [&str; 5] = ["Alice", "Bob", "Carol", "Dave", "Eve"];
@@ -29,6 +37,12 @@ fn assert_round_event(event: &Event, message_type: &str, round_ref: Option<&nost
         assert_eq!(payload.closing_block, 910000);
         assert_eq!(payload.recycled_block, 910144);
     } else if message_type == NEW_ROUND_JOIN {
+        let round_ref = round_ref.expect("round ref should be set");
+        assert!(event_has_event_reference(event, round_ref));
+    } else if message_type == NEW_ROUND_VTXO_TREE_PROPOSAL {
+        let round_ref = round_ref.expect("round ref should be set");
+        assert!(validate_new_round_vtxo_tree_proposal_event(event, round_ref).is_ok());
+    } else if message_type == NEW_ROUND_PREPARE_START || message_type == NEW_ROUND_START_PREPARED {
         let round_ref = round_ref.expect("round ref should be set");
         assert!(event_has_event_reference(event, round_ref));
     } else {
@@ -133,21 +147,21 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
 
     println!("[phase] Tree Proposal");
     trace.note("tree_proposal", "provider publishing proposal");
+    let proposal_payload = canonical_vtxo_tree_proposal_payload();
+    let round_ref_for_proposal = round_ref.as_ref().expect("round ref should be present");
     provider
-        .send_new_round_vtxo_tree_proposal(
-            ROUND_ID,
-            "round_id=r-2026-02-24-003;vtxo_tree=VTXO_ROOT;forfeit_tree=FORFEIT_TREE;recycle=RECYCLE_TX;actor=Steve",
-        )
+        .send_new_round_vtxo_tree_proposal(round_ref_for_proposal, &proposal_payload)
         .await
         .expect("provider should send proposal");
     println!("[Steve] published {NEW_ROUND_VTXO_TREE_PROPOSAL}");
 
+    let mut proposal_ref: Option<nostr_sdk::prelude::EventId> = None;
     for named in &users {
         let proposal = named
             .user
             .wait_for_new_round_vtxo_tree_proposal_event(
                 provider.pubkey,
-                ROUND_ID,
+                round_ref_for_proposal,
                 Duration::from_secs(10),
             )
             .await
@@ -159,32 +173,48 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             NEW_ROUND_VTXO_TREE_PROPOSAL,
             Some(round_ref.as_ref().expect("round ref should be present")),
         );
+        let parsed_proposal = parse_new_round_vtxo_tree_proposal_payload(&proposal.content)
+            .expect("proposal should parse");
+        assert_eq!(parsed_proposal.root_tx, proposal_payload.root_tx);
+        if let Some(existing) = proposal_ref.as_ref() {
+            assert_eq!(existing, &proposal.id);
+        } else {
+            proposal_ref = Some(proposal.id);
+        }
 
-        let accept_payload = format!(
-            "round_id={ROUND_ID};vtxo_tree_signatures=VTXO_ROOT_SIGNATURE_{name};actor={name}",
-            name = named.name
-        );
+        let accept_payload = canonical_vtxo_tree_accept_payload(named.name);
         named
             .user
-            .send_new_round_vtxo_tree_accept(ROUND_ID, &accept_payload)
+            .send_new_round_vtxo_tree_accept(
+                round_ref_for_proposal,
+                proposal_ref.as_ref().expect("proposal ref should be present"),
+                &accept_payload,
+            )
             .await
             .expect("user should send accept");
         println!("[{}] published {NEW_ROUND_VTXO_TREE_ACCEPT}", named.name);
         let accept = provider
             .wait_for_new_round_vtxo_tree_accept_event(
                 named.user.pubkey,
-                ROUND_ID,
+                round_ref_for_proposal,
+                proposal_ref.as_ref().expect("proposal ref should be present"),
                 Duration::from_secs(10),
             )
             .await
             .expect("provider should wait for accept")
             .expect("provider should receive accept");
         trace.event("Steve", &format!("received accept from {}", named.name), &accept);
-        assert_round_event(
-            &accept,
-            NEW_ROUND_VTXO_TREE_ACCEPT,
-            Some(round_ref.as_ref().expect("round ref should be present")),
+        assert!(
+            validate_new_round_vtxo_tree_accept_event(
+                &accept,
+                round_ref_for_proposal,
+                proposal_ref.as_ref().expect("proposal ref should be present"),
+            )
+            .is_ok()
         );
+        let parsed_accept = parse_new_round_vtxo_tree_accept_payload(&accept.content)
+            .expect("accept payload should parse");
+        assert_eq!(parsed_accept.vtxo_tree_signatures.len(), 2);
         tree_accepts += 1;
     }
     assert_eq!(tree_accepts, users.len());
@@ -192,21 +222,21 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
 
     println!("[phase] Start Preparation");
     trace.note("start_preparation", "provider publishing prepare_start");
+    let prepare_start_payload = canonical_prepare_start_payload();
+    let round_ref_for_prepare = round_ref.as_ref().expect("round ref should be present");
     provider
-        .send_new_round_prepare_start(
-            ROUND_ID,
-            "round_id=r-2026-02-24-003;root_binding=VTXO_ROOT;request=FORFEIT+RECYCLE+ONBOARD_SIGS;actor=Steve",
-        )
+        .send_new_round_prepare_start(round_ref_for_prepare, &prepare_start_payload)
         .await
         .expect("provider should send prepare_start");
     println!("[Steve] published {NEW_ROUND_PREPARE_START}");
 
+    let mut prepare_start_ref: Option<nostr_sdk::prelude::EventId> = None;
     for named in &users {
         let prepare_start = named
             .user
             .wait_for_new_round_prepare_start_event(
                 provider.pubkey,
-                ROUND_ID,
+                round_ref_for_prepare,
                 Duration::from_secs(10),
             )
             .await
@@ -218,21 +248,30 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             NEW_ROUND_PREPARE_START,
             Some(round_ref.as_ref().expect("round ref should be present")),
         );
+        assert!(validate_new_round_prepare_start_event(&prepare_start, round_ref_for_prepare).is_ok());
+        assert!(parse_new_round_prepare_start_payload(&prepare_start.content).is_some());
+        if let Some(existing) = prepare_start_ref.as_ref() {
+            assert_eq!(existing, &prepare_start.id);
+        } else {
+            prepare_start_ref = Some(prepare_start.id);
+        }
 
-        let prepared_payload = format!(
-            "round_id={ROUND_ID};forfeit_sig=FORFEIT_SIG_{name};recycle_sig=RECYCLE_SIG_{name};root_sig=VTXO_ROOT_SIGNATURE_{name};actor={name}",
-            name = named.name
-        );
+        let prepared_payload = canonical_start_prepared_payload(named.name);
         named
             .user
-            .send_new_round_start_prepared(ROUND_ID, &prepared_payload)
+            .send_new_round_start_prepared(
+                round_ref_for_prepare,
+                prepare_start_ref.as_ref().expect("prepare_start ref should be present"),
+                &prepared_payload,
+            )
             .await
             .expect("user should send start_prepared");
         println!("[{}] published {NEW_ROUND_START_PREPARED}", named.name);
         let prepared = provider
             .wait_for_new_round_start_prepared_event(
                 named.user.pubkey,
-                ROUND_ID,
+                round_ref_for_prepare,
+                prepare_start_ref.as_ref().expect("prepare_start ref should be present"),
                 Duration::from_secs(10),
             )
             .await
@@ -248,6 +287,15 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             NEW_ROUND_START_PREPARED,
             Some(round_ref.as_ref().expect("round ref should be present")),
         );
+        assert!(
+            validate_new_round_start_prepared_event(
+                &prepared,
+                round_ref_for_prepare,
+                prepare_start_ref.as_ref().expect("prepare_start ref should be present"),
+            )
+            .is_ok()
+        );
+        assert!(parse_new_round_start_prepared_payload(&prepared.content).is_some());
         prepared_signals += 1;
     }
     assert_eq!(prepared_signals, users.len());

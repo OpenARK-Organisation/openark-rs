@@ -4,10 +4,17 @@ use openark_rs::{
     ROUND_MESSAGE_VERSION, event_has_event_reference, event_has_message_type,
     event_has_message_version, event_has_round_id, event_is_openark_kind_150,
     parse_new_round_initiate_payload, parse_new_round_join_payload,
+    parse_new_round_start_prepared_payload, parse_new_round_vtxo_tree_accept_payload,
+    validate_new_round_prepare_start_event, validate_new_round_start_prepared_event,
+    validate_new_round_vtxo_tree_accept_event, validate_new_round_vtxo_tree_proposal_event,
 };
 use std::time::Duration;
 mod support;
-use support::{TraceRecorder, canonical_join_payload, start_relay};
+use support::{
+    TraceRecorder, canonical_join_payload, canonical_prepare_start_payload,
+    canonical_start_prepared_payload, canonical_vtxo_tree_accept_payload,
+    canonical_vtxo_tree_proposal_payload, start_relay,
+};
 
 fn assert_round_event(
     event: &nostr_sdk::prelude::Event,
@@ -26,19 +33,43 @@ fn assert_round_event(
     } else if message_type == NEW_ROUND_JOIN {
         let round_ref = round_ref.expect("round ref should be set");
         assert!(event_has_event_reference(event, round_ref));
+    } else if message_type == NEW_ROUND_VTXO_TREE_PROPOSAL {
+        let round_ref = round_ref.expect("round ref should be set");
+        assert!(validate_new_round_vtxo_tree_proposal_event(event, round_ref).is_ok());
+    } else if message_type == NEW_ROUND_VTXO_TREE_ACCEPT {
+        let round_ref = round_ref.expect("round ref should be set");
+        assert!(event_has_event_reference(event, round_ref));
+    } else if message_type == NEW_ROUND_PREPARE_START {
+        let round_ref = round_ref.expect("round ref should be set");
+        assert!(validate_new_round_prepare_start_event(event, round_ref).is_ok());
+    } else if message_type == NEW_ROUND_START_PREPARED {
+        let round_ref = round_ref.expect("round ref should be set");
+        assert!(event_has_event_reference(event, round_ref));
     } else {
         assert!(event_has_round_id(event, round_id));
     }
 }
 
 fn is_valid_accept_payload(content: &str) -> bool {
-    content.contains("VTXO_ROOT_SIGNATURE_")
+    let Some(payload) = parse_new_round_vtxo_tree_accept_payload(content) else {
+        return false;
+    };
+    payload.vtxo_tree_signatures.values().all(|sig| sig.starts_with("BASE64_SIG_"))
 }
 
 fn is_valid_prepared_payload(content: &str) -> bool {
-    content.contains("FORFEIT_SIG_")
-        && content.contains("RECYCLE_SIG_")
-        && content.contains("VTXO_ROOT_SIGNATURE_")
+    let Some(payload) = parse_new_round_start_prepared_payload(content) else {
+        return false;
+    };
+    payload
+        .funding_signatures
+        .values()
+        .all(|sig| sig.starts_with("BASE64_FUNDING_SIG_"))
+        && payload
+            .forfeit_signatures
+            .values()
+            .all(|sig| sig.starts_with("BASE64_FORFEIT_SIG_"))
+        && payload.recycle_signature.starts_with("BASE64_RECYCLE_SIG_")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -183,47 +214,68 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         );
     }
 
+    let proposal_payload = canonical_vtxo_tree_proposal_payload();
     provider
-        .send_new_round_vtxo_tree_proposal(ROUND_ID, "round_id=r-2026-02-24-004-b;vtxo_tree=VTXO_ROOT")
+        .send_new_round_vtxo_tree_proposal(&round_ref, &proposal_payload)
         .await
         .expect("proposal send");
     println!("[Steve] published {NEW_ROUND_VTXO_TREE_PROPOSAL}");
 
-    let _ = alice
-        .wait_for_new_round_vtxo_tree_proposal_event(provider.pubkey, ROUND_ID, Duration::from_secs(10))
+    let alice_proposal = alice
+        .wait_for_new_round_vtxo_tree_proposal_event(
+            provider.pubkey,
+            &round_ref,
+            Duration::from_secs(10),
+        )
         .await
         .expect("alice wait proposal")
         .expect("alice proposal");
-    let _ = bob
-        .wait_for_new_round_vtxo_tree_proposal_event(provider.pubkey, ROUND_ID, Duration::from_secs(10))
+    let bob_proposal = bob
+        .wait_for_new_round_vtxo_tree_proposal_event(
+            provider.pubkey,
+            &round_ref,
+            Duration::from_secs(10),
+        )
         .await
         .expect("bob wait proposal")
         .expect("bob proposal");
+    assert_eq!(alice_proposal.id, bob_proposal.id);
+    let proposal_ref = alice_proposal.id;
+
+    let alice_accept_payload = canonical_vtxo_tree_accept_payload("Alice");
+    let mut bob_accept_payload = canonical_vtxo_tree_accept_payload("Bob");
+    bob_accept_payload.vtxo_tree_signatures.insert(
+        "not-a-hex-txid:0".to_string(),
+        "BASE64_SIG_INVALID_Bob".to_string(),
+    );
 
     alice
-        .send_new_round_vtxo_tree_accept(
-            ROUND_ID,
-            "round_id=r-2026-02-24-004-b;vtxo_tree_signatures=VTXO_ROOT_SIGNATURE_Alice",
-        )
+        .send_new_round_vtxo_tree_accept(&round_ref, &proposal_ref, &alice_accept_payload)
         .await
         .expect("alice accept");
-    bob.send_new_round_vtxo_tree_accept(
-        ROUND_ID,
-        "round_id=r-2026-02-24-004-b;vtxo_tree_signatures=INVALID_SIG_Bob",
-    )
-    .await
-    .expect("bob invalid accept");
+    bob.send_new_round_vtxo_tree_accept(&round_ref, &proposal_ref, &bob_accept_payload)
+        .await
+        .expect("bob invalid accept");
 
     let alice_accept = provider
-        .wait_for_new_round_vtxo_tree_accept_event(alice.pubkey, ROUND_ID, Duration::from_secs(5))
+        .wait_for_new_round_vtxo_tree_accept_event(
+            alice.pubkey,
+            &round_ref,
+            &proposal_ref,
+            Duration::from_secs(5),
+        )
         .await
         .expect("wait alice accept")
         .expect("receive alice accept");
     let bob_accept = provider
-        .wait_for_new_round_vtxo_tree_accept_event(bob.pubkey, ROUND_ID, Duration::from_secs(5))
+        .wait_for_new_round_vtxo_tree_accept_event(
+            bob.pubkey,
+            &round_ref,
+            &proposal_ref,
+            Duration::from_secs(5),
+        )
         .await
-        .expect("wait bob accept")
-        .expect("receive bob accept");
+        .expect("wait bob accept");
 
     assert_round_event(
         &alice_accept,
@@ -231,19 +283,20 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         ROUND_ID,
         Some(&round_ref),
     );
-    assert_round_event(
-        &bob_accept,
-        NEW_ROUND_VTXO_TREE_ACCEPT,
-        ROUND_ID,
-        Some(&round_ref),
-    );
+    assert!(bob_accept.is_none(), "invalid accept should be filtered out");
 
     let mut valid = 0usize;
-    if is_valid_accept_payload(&alice_accept.content) {
+    if validate_new_round_vtxo_tree_accept_event(&alice_accept, &round_ref, &proposal_ref).is_ok()
+        && is_valid_accept_payload(&alice_accept.content)
+    {
         valid += 1;
     }
-    if is_valid_accept_payload(&bob_accept.content) {
-        valid += 1;
+    if let Some(bob_accept) = bob_accept.as_ref() {
+        if validate_new_round_vtxo_tree_accept_event(bob_accept, &round_ref, &proposal_ref).is_ok()
+            && is_valid_accept_payload(&bob_accept.content)
+        {
+            valid += 1;
+        }
     }
 
     assert_eq!(valid, 1);
@@ -311,87 +364,126 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
         );
     }
 
+    let proposal_payload = canonical_vtxo_tree_proposal_payload();
     provider
-        .send_new_round_vtxo_tree_proposal(ROUND_ID, "round_id=r-2026-02-24-004-c;vtxo_tree=VTXO_ROOT")
+        .send_new_round_vtxo_tree_proposal(&round_ref, &proposal_payload)
         .await
         .expect("proposal send");
+    let mut proposal_ref: Option<nostr_sdk::prelude::EventId> = None;
     for user in [&alice, &bob] {
-        let _ = user
-            .wait_for_new_round_vtxo_tree_proposal_event(provider.pubkey, ROUND_ID, Duration::from_secs(10))
+        let proposal = user
+            .wait_for_new_round_vtxo_tree_proposal_event(
+                provider.pubkey,
+                &round_ref,
+                Duration::from_secs(10),
+            )
             .await
             .expect("wait proposal")
             .expect("receive proposal");
+        if let Some(existing) = proposal_ref.as_ref() {
+            assert_eq!(existing, &proposal.id);
+        } else {
+            proposal_ref = Some(proposal.id);
+        }
     }
+    let proposal_ref = proposal_ref.expect("proposal ref should be present");
 
+    let alice_accept_payload = canonical_vtxo_tree_accept_payload("Alice");
+    let bob_accept_payload = canonical_vtxo_tree_accept_payload("Bob");
     alice
-        .send_new_round_vtxo_tree_accept(
-            ROUND_ID,
-            "round_id=r-2026-02-24-004-c;vtxo_tree_signatures=VTXO_ROOT_SIGNATURE_Alice",
-        )
+        .send_new_round_vtxo_tree_accept(&round_ref, &proposal_ref, &alice_accept_payload)
         .await
         .expect("alice accept");
-    bob.send_new_round_vtxo_tree_accept(
-        ROUND_ID,
-        "round_id=r-2026-02-24-004-c;vtxo_tree_signatures=VTXO_ROOT_SIGNATURE_Bob",
-    )
-    .await
-    .expect("bob accept");
+    bob.send_new_round_vtxo_tree_accept(&round_ref, &proposal_ref, &bob_accept_payload)
+        .await
+        .expect("bob accept");
     for pubkey in [alice.pubkey, bob.pubkey] {
         let _ = provider
-            .wait_for_new_round_vtxo_tree_accept_event(pubkey, ROUND_ID, Duration::from_secs(5))
+            .wait_for_new_round_vtxo_tree_accept_event(
+                pubkey,
+                &round_ref,
+                &proposal_ref,
+                Duration::from_secs(5),
+            )
             .await
             .expect("wait accept")
             .expect("receive accept");
     }
 
+    let prepare_start_payload = canonical_prepare_start_payload();
     provider
-        .send_new_round_prepare_start(ROUND_ID, "round_id=r-2026-02-24-004-c;root_binding=VTXO_ROOT")
+        .send_new_round_prepare_start(&round_ref, &prepare_start_payload)
         .await
         .expect("prepare start send");
     println!("[Steve] published {NEW_ROUND_PREPARE_START}");
 
+    let mut prepare_start_ref: Option<nostr_sdk::prelude::EventId> = None;
     for user in [&alice, &bob] {
-        let _ = user
-            .wait_for_new_round_prepare_start_event(provider.pubkey, ROUND_ID, Duration::from_secs(10))
+        let prepare_start = user
+            .wait_for_new_round_prepare_start_event(
+                provider.pubkey,
+                &round_ref,
+                Duration::from_secs(10),
+            )
             .await
             .expect("wait prepare")
             .expect("receive prepare");
+        if let Some(existing) = prepare_start_ref.as_ref() {
+            assert_eq!(existing, &prepare_start.id);
+        } else {
+            prepare_start_ref = Some(prepare_start.id);
+        }
     }
+    let prepare_start_ref = prepare_start_ref.expect("prepare_start ref should be present");
 
+    let alice_start_prepared = canonical_start_prepared_payload("Alice");
+    let mut bob_start_prepared = canonical_start_prepared_payload("Bob");
+    bob_start_prepared
+        .forfeit_signatures
+        .insert("not-a-hex-txid:0".to_string(), "BASE64_FORFEIT_SIG_BAD_Bob".to_string());
     alice
-        .send_new_round_start_prepared(
-            ROUND_ID,
-            "round_id=r-2026-02-24-004-c;forfeit_sig=FORFEIT_SIG_Alice;recycle_sig=RECYCLE_SIG_Alice;root_sig=VTXO_ROOT_SIGNATURE_Alice",
-        )
+        .send_new_round_start_prepared(&round_ref, &prepare_start_ref, &alice_start_prepared)
         .await
         .expect("alice prepared");
-    bob.send_new_round_start_prepared(
-        ROUND_ID,
-        "round_id=r-2026-02-24-004-c;forfeit_sig=MISSING;recycle_sig=MISSING;root_sig=BAD",
-    )
-    .await
-    .expect("bob invalid prepared");
+    bob.send_new_round_start_prepared(&round_ref, &prepare_start_ref, &bob_start_prepared)
+        .await
+        .expect("bob invalid prepared");
 
     let alice_prepared = provider
-        .wait_for_new_round_start_prepared_event(alice.pubkey, ROUND_ID, Duration::from_secs(5))
+        .wait_for_new_round_start_prepared_event(
+            alice.pubkey,
+            &round_ref,
+            &prepare_start_ref,
+            Duration::from_secs(5),
+        )
         .await
         .expect("wait alice prepared")
         .expect("receive alice prepared");
     let bob_prepared = provider
-        .wait_for_new_round_start_prepared_event(bob.pubkey, ROUND_ID, Duration::from_secs(5))
+        .wait_for_new_round_start_prepared_event(
+            bob.pubkey,
+            &round_ref,
+            &prepare_start_ref,
+            Duration::from_secs(5),
+        )
         .await
-        .expect("wait bob prepared")
-        .expect("receive bob prepared");
+        .expect("wait bob prepared");
 
     assert_round_event(&alice_prepared, NEW_ROUND_START_PREPARED, ROUND_ID, Some(&round_ref));
-    assert_round_event(&bob_prepared, NEW_ROUND_START_PREPARED, ROUND_ID, Some(&round_ref));
+    assert!(
+        validate_new_round_start_prepared_event(&alice_prepared, &round_ref, &prepare_start_ref)
+            .is_ok()
+    );
+    assert!(bob_prepared.is_none(), "invalid start_prepared should be filtered out");
 
     let mut valid = 0usize;
     if is_valid_prepared_payload(&alice_prepared.content) {
         valid += 1;
     }
-    if is_valid_prepared_payload(&bob_prepared.content) {
-        valid += 1;
+    if let Some(bob_prepared) = bob_prepared.as_ref() {
+        if is_valid_prepared_payload(&bob_prepared.content) {
+            valid += 1;
+        }
     }
 
     assert_eq!(valid, 1);
@@ -459,79 +551,114 @@ async fn failure_late_start_prepared_blocks_activation() {
         );
     }
 
+    let proposal_payload = canonical_vtxo_tree_proposal_payload();
     provider
-        .send_new_round_vtxo_tree_proposal(ROUND_ID, "round_id=r-2026-02-24-004-d;vtxo_tree=VTXO_ROOT")
+        .send_new_round_vtxo_tree_proposal(&round_ref, &proposal_payload)
         .await
         .expect("proposal send");
+    let mut proposal_ref: Option<nostr_sdk::prelude::EventId> = None;
     for user in [&alice, &bob] {
-        let _ = user
-            .wait_for_new_round_vtxo_tree_proposal_event(provider.pubkey, ROUND_ID, Duration::from_secs(10))
+        let proposal = user
+            .wait_for_new_round_vtxo_tree_proposal_event(
+                provider.pubkey,
+                &round_ref,
+                Duration::from_secs(10),
+            )
             .await
             .expect("wait proposal")
             .expect("receive proposal");
+        if let Some(existing) = proposal_ref.as_ref() {
+            assert_eq!(existing, &proposal.id);
+        } else {
+            proposal_ref = Some(proposal.id);
+        }
     }
+    let proposal_ref = proposal_ref.expect("proposal ref should be present");
 
+    let alice_accept_payload = canonical_vtxo_tree_accept_payload("Alice");
+    let bob_accept_payload = canonical_vtxo_tree_accept_payload("Bob");
     alice
-        .send_new_round_vtxo_tree_accept(
-            ROUND_ID,
-            "round_id=r-2026-02-24-004-d;vtxo_tree_signatures=VTXO_ROOT_SIGNATURE_Alice",
-        )
+        .send_new_round_vtxo_tree_accept(&round_ref, &proposal_ref, &alice_accept_payload)
         .await
         .expect("alice accept");
-    bob.send_new_round_vtxo_tree_accept(
-        ROUND_ID,
-        "round_id=r-2026-02-24-004-d;vtxo_tree_signatures=VTXO_ROOT_SIGNATURE_Bob",
-    )
-    .await
-    .expect("bob accept");
+    bob.send_new_round_vtxo_tree_accept(&round_ref, &proposal_ref, &bob_accept_payload)
+        .await
+        .expect("bob accept");
     for pubkey in [alice.pubkey, bob.pubkey] {
         let _ = provider
-            .wait_for_new_round_vtxo_tree_accept_event(pubkey, ROUND_ID, Duration::from_secs(5))
+            .wait_for_new_round_vtxo_tree_accept_event(
+                pubkey,
+                &round_ref,
+                &proposal_ref,
+                Duration::from_secs(5),
+            )
             .await
             .expect("wait accept")
             .expect("receive accept");
     }
 
+    let prepare_start_payload = canonical_prepare_start_payload();
     provider
-        .send_new_round_prepare_start(ROUND_ID, "round_id=r-2026-02-24-004-d;root_binding=VTXO_ROOT")
+        .send_new_round_prepare_start(&round_ref, &prepare_start_payload)
         .await
         .expect("prepare start send");
+    let mut prepare_start_ref: Option<nostr_sdk::prelude::EventId> = None;
     for user in [&alice, &bob] {
-        let _ = user
-            .wait_for_new_round_prepare_start_event(provider.pubkey, ROUND_ID, Duration::from_secs(10))
+        let prepare_start = user
+            .wait_for_new_round_prepare_start_event(
+                provider.pubkey,
+                &round_ref,
+                Duration::from_secs(10),
+            )
             .await
             .expect("wait prepare")
             .expect("receive prepare");
+        if let Some(existing) = prepare_start_ref.as_ref() {
+            assert_eq!(existing, &prepare_start.id);
+        } else {
+            prepare_start_ref = Some(prepare_start.id);
+        }
     }
+    let prepare_start_ref = prepare_start_ref.expect("prepare_start ref should be present");
 
+    let alice_start_prepared = canonical_start_prepared_payload("Alice");
     alice
-        .send_new_round_start_prepared(
-            ROUND_ID,
-            "round_id=r-2026-02-24-004-d;forfeit_sig=FORFEIT_SIG_Alice;recycle_sig=RECYCLE_SIG_Alice;root_sig=VTXO_ROOT_SIGNATURE_Alice",
-        )
+        .send_new_round_start_prepared(&round_ref, &prepare_start_ref, &alice_start_prepared)
         .await
         .expect("alice prepared");
 
+    let bob_start_prepared = canonical_start_prepared_payload("Bob");
     let bob_late = async {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        bob.send_new_round_start_prepared(
-            ROUND_ID,
-            "round_id=r-2026-02-24-004-d;forfeit_sig=FORFEIT_SIG_Bob;recycle_sig=RECYCLE_SIG_Bob;root_sig=VTXO_ROOT_SIGNATURE_Bob",
-        )
+        bob.send_new_round_start_prepared(&round_ref, &prepare_start_ref, &bob_start_prepared)
         .await
         .expect("bob late prepared send");
         println!("[Bob] late {NEW_ROUND_START_PREPARED} published");
     };
 
     let alice_prepared = provider
-        .wait_for_new_round_start_prepared_event(alice.pubkey, ROUND_ID, Duration::from_secs(1))
+        .wait_for_new_round_start_prepared_event(
+            alice.pubkey,
+            &round_ref,
+            &prepare_start_ref,
+            Duration::from_secs(1),
+        )
         .await
         .expect("wait alice prepared")
         .expect("receive alice prepared");
     assert_round_event(&alice_prepared, NEW_ROUND_START_PREPARED, ROUND_ID, Some(&round_ref));
+    assert!(
+        validate_new_round_start_prepared_event(&alice_prepared, &round_ref, &prepare_start_ref)
+            .is_ok()
+    );
 
     let bob_timeout = provider
-        .wait_for_new_round_start_prepared_event(bob.pubkey, ROUND_ID, Duration::from_secs(1))
+        .wait_for_new_round_start_prepared_event(
+            bob.pubkey,
+            &round_ref,
+            &prepare_start_ref,
+            Duration::from_secs(1),
+        )
         .await
         .expect("wait bob prepared timeout");
 

@@ -3,6 +3,7 @@ pub mod message;
 pub mod transport;
 
 pub use matchers::{
+    event_event_reference_by_marker,
     event_event_reference,
     event_has_event_reference,
     event_has_message_type,
@@ -12,12 +13,21 @@ pub use matchers::{
     event_round_id,
     validate_new_round_initiate_event,
     validate_new_round_join_event_reference,
+    validate_new_round_prepare_start_event,
+    validate_new_round_start_prepared_event,
+    validate_new_round_vtxo_tree_accept_event,
+    validate_new_round_vtxo_tree_proposal_event,
 };
 pub use message::{
     NewRoundJoinKeys,
     NewRoundJoinOffboard,
     NewRoundJoinOnboard,
     NewRoundJoinPayload,
+    NewRoundPrepareStartPayload,
+    NewRoundStartPreparedPayload,
+    NewRoundVtxoTreeAcceptPayload,
+    NewRoundVtxoTreeProposalPayload,
+    NewRoundVtxoTreeProposalRecycle,
     NewRoundInitiatePayload,
     NEW_ROUND_INITIATE,
     NEW_ROUND_JOIN,
@@ -31,6 +41,18 @@ pub use message::{
     new_round_initiate_event_builder,
     new_round_join_event_builder,
     new_round_join_payload_json,
+    new_round_prepare_start_event_builder,
+    new_round_prepare_start_payload_json,
+    new_round_start_prepared_event_builder,
+    new_round_start_prepared_payload_json,
+    new_round_vtxo_tree_accept_event_builder,
+    new_round_vtxo_tree_accept_payload_json,
+    new_round_vtxo_tree_proposal_event_builder,
+    new_round_vtxo_tree_proposal_payload_json,
     parse_new_round_join_payload,
     parse_new_round_initiate_payload,
+    parse_new_round_prepare_start_payload,
+    parse_new_round_start_prepared_payload,
+    parse_new_round_vtxo_tree_accept_payload,
+    parse_new_round_vtxo_tree_proposal_payload,
 };

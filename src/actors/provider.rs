@@ -2,12 +2,12 @@ use nostr_sdk::prelude::*;
 use std::time::Duration;
 
 use crate::round::message::{
-    NEW_ROUND_PREPARE_START, NEW_ROUND_START, NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT,
-    NEW_ROUND_VTXO_TREE_PROPOSAL,
+    NEW_ROUND_START, NewRoundPrepareStartPayload, NewRoundVtxoTreeProposalPayload,
 };
 use crate::round::transport::{
-    send_new_round_initiate_message, send_round_message, wait_for_new_round_join_message,
-    wait_for_round_message,
+    send_new_round_initiate_message, send_new_round_prepare_start_message,
+    send_new_round_vtxo_tree_proposal_message, send_round_message, wait_for_new_round_join_message,
+    wait_for_new_round_start_prepared_message, wait_for_new_round_vtxo_tree_accept_message,
 };
 use crate::{PROVIDER_MESSAGE, USER_REPLY_MESSAGE};
 
@@ -78,52 +78,51 @@ impl OpenArkServiceProvider {
 
     pub async fn send_new_round_vtxo_tree_proposal(
         &self,
-        round_id: &str,
-        payload: &str,
+        initiate_event_id: &EventId,
+        payload: &NewRoundVtxoTreeProposalPayload,
     ) -> Result<()> {
-        send_round_message(
-            &self.client,
-            NEW_ROUND_VTXO_TREE_PROPOSAL,
-            round_id,
-            payload,
-        )
-        .await
+        send_new_round_vtxo_tree_proposal_message(&self.client, initiate_event_id, payload).await
     }
 
     pub async fn wait_for_new_round_vtxo_tree_accept_event(
         &self,
         user_pubkey: PublicKey,
-        round_id: &str,
+        initiate_event_id: &EventId,
+        proposal_event_id: &EventId,
         timeout: Duration,
     ) -> Result<Option<Event>> {
-        wait_for_round_message(
+        wait_for_new_round_vtxo_tree_accept_message(
             &self.client,
             user_pubkey,
-            NEW_ROUND_VTXO_TREE_ACCEPT,
-            round_id,
+            initiate_event_id,
+            proposal_event_id,
             timeout,
         )
         .await
     }
 
-    pub async fn send_new_round_prepare_start(&self, round_id: &str, payload: &str) -> Result<()> {
-        send_round_message(&self.client, NEW_ROUND_PREPARE_START, round_id, payload).await
+    pub async fn send_new_round_prepare_start(
+        &self,
+        initiate_event_id: &EventId,
+        payload: &NewRoundPrepareStartPayload,
+    ) -> Result<()> {
+        send_new_round_prepare_start_message(&self.client, initiate_event_id, payload).await
     }
 
     pub async fn wait_for_new_round_start_prepared_event(
         &self,
         user_pubkey: PublicKey,
-        round_id: &str,
+        initiate_event_id: &EventId,
+        prepare_start_event_id: &EventId,
         timeout: Duration,
     ) -> Result<Option<Event>> {
-        wait_for_round_message(
+        wait_for_new_round_start_prepared_message(
             &self.client,
             user_pubkey,
-            NEW_ROUND_START_PREPARED,
-            round_id,
+            initiate_event_id,
+            prepare_start_event_id,
             timeout,
-        )
-        .await
+        ).await
     }
 
     pub async fn send_new_round_start(&self, round_id: &str, payload: &str) -> Result<()> {

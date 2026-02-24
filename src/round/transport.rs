@@ -3,11 +3,19 @@ use std::time::Duration;
 
 use super::matchers::{
     event_has_message_type, event_has_round_id, validate_new_round_initiate_event,
-    validate_new_round_join_event_reference,
+    validate_new_round_join_event_reference, validate_new_round_vtxo_tree_accept_event,
+    validate_new_round_vtxo_tree_proposal_event, validate_new_round_prepare_start_event,
+    validate_new_round_start_prepared_event,
 };
 use super::message::{
-    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NewRoundJoinPayload, new_round_initiate_event_builder,
-    new_round_join_event_builder, new_round_join_payload_json, openark_round_kind, round_tags,
+    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START_PREPARED,
+    NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL, NewRoundJoinPayload,
+    NewRoundPrepareStartPayload, NewRoundStartPreparedPayload, NewRoundVtxoTreeAcceptPayload,
+    NewRoundVtxoTreeProposalPayload,
+    new_round_initiate_event_builder, new_round_join_event_builder, new_round_join_payload_json,
+    new_round_prepare_start_event_builder, new_round_start_prepared_event_builder,
+    new_round_vtxo_tree_accept_event_builder, new_round_vtxo_tree_proposal_event_builder,
+    openark_round_kind, round_tags,
 };
 
 pub async fn send_new_round_initiate_message(
@@ -34,6 +42,22 @@ pub async fn send_round_message(
         message_type, NEW_ROUND_JOIN,
         "new_round_join must use canonical join builder"
     );
+    assert_ne!(
+        message_type, NEW_ROUND_VTXO_TREE_PROPOSAL,
+        "new_round_vtxo_tree_proposal must use canonical proposal builder"
+    );
+    assert_ne!(
+        message_type, NEW_ROUND_VTXO_TREE_ACCEPT,
+        "new_round_vtxo_tree_accept must use canonical accept builder"
+    );
+    assert_ne!(
+        message_type, NEW_ROUND_PREPARE_START,
+        "new_round_prepare_start must use canonical prepare_start builder"
+    );
+    assert_ne!(
+        message_type, NEW_ROUND_START_PREPARED,
+        "new_round_start_prepared must use canonical start_prepared builder"
+    );
     let event = EventBuilder::new(openark_round_kind(), payload.to_string())
         .tags(round_tags(message_type, round_id));
     client.send_event_builder(event).await?;
@@ -47,6 +71,49 @@ pub async fn send_new_round_join_message(
 ) -> Result<()> {
     let payload_json = new_round_join_payload_json(payload);
     let event = new_round_join_event_builder(initiate_event_id, &payload_json);
+    client.send_event_builder(event).await?;
+    Ok(())
+}
+
+pub async fn send_new_round_vtxo_tree_proposal_message(
+    client: &Client,
+    initiate_event_id: &EventId,
+    payload: &NewRoundVtxoTreeProposalPayload,
+) -> Result<()> {
+    let event = new_round_vtxo_tree_proposal_event_builder(initiate_event_id, payload);
+    client.send_event_builder(event).await?;
+    Ok(())
+}
+
+pub async fn send_new_round_vtxo_tree_accept_message(
+    client: &Client,
+    initiate_event_id: &EventId,
+    proposal_event_id: &EventId,
+    payload: &NewRoundVtxoTreeAcceptPayload,
+) -> Result<()> {
+    let event = new_round_vtxo_tree_accept_event_builder(initiate_event_id, proposal_event_id, payload);
+    client.send_event_builder(event).await?;
+    Ok(())
+}
+
+pub async fn send_new_round_prepare_start_message(
+    client: &Client,
+    initiate_event_id: &EventId,
+    payload: &NewRoundPrepareStartPayload,
+) -> Result<()> {
+    let event = new_round_prepare_start_event_builder(initiate_event_id, payload);
+    client.send_event_builder(event).await?;
+    Ok(())
+}
+
+pub async fn send_new_round_start_prepared_message(
+    client: &Client,
+    initiate_event_id: &EventId,
+    prepare_start_event_id: &EventId,
+    payload: &NewRoundStartPreparedPayload,
+) -> Result<()> {
+    let event =
+        new_round_start_prepared_event_builder(initiate_event_id, prepare_start_event_id, payload);
     client.send_event_builder(event).await?;
     Ok(())
 }
@@ -97,6 +164,22 @@ pub async fn wait_for_round_message(
         expected_message_type, NEW_ROUND_JOIN,
         "new_round_join must use canonical join wait path"
     );
+    assert_ne!(
+        expected_message_type, NEW_ROUND_VTXO_TREE_PROPOSAL,
+        "new_round_vtxo_tree_proposal must use canonical proposal wait path"
+    );
+    assert_ne!(
+        expected_message_type, NEW_ROUND_VTXO_TREE_ACCEPT,
+        "new_round_vtxo_tree_accept must use canonical accept wait path"
+    );
+    assert_ne!(
+        expected_message_type, NEW_ROUND_PREPARE_START,
+        "new_round_prepare_start must use canonical prepare_start wait path"
+    );
+    assert_ne!(
+        expected_message_type, NEW_ROUND_START_PREPARED,
+        "new_round_start_prepared must use canonical start_prepared wait path"
+    );
     let filter = Filter::new()
         .kind(openark_round_kind())
         .author(expected_author)
@@ -144,6 +227,148 @@ pub async fn wait_for_new_round_join_message(
                 if event.pubkey == expected_author
                     && validate_new_round_join_event_reference(event, expected_initiate_event_id)
                         .is_ok()
+                {
+                    return Some(event.clone());
+                }
+            }
+        }
+        None
+    })
+    .await
+    .unwrap_or(None);
+
+    Ok(found)
+}
+
+pub async fn wait_for_new_round_vtxo_tree_proposal_message(
+    client: &Client,
+    expected_author: PublicKey,
+    expected_initiate_event_id: &EventId,
+    timeout: Duration,
+) -> Result<Option<Event>> {
+    let filter = Filter::new()
+        .kind(openark_round_kind())
+        .author(expected_author)
+        .hashtag(NEW_ROUND_VTXO_TREE_PROPOSAL);
+    client.subscribe(filter).await?;
+
+    let found = tokio::time::timeout(timeout, async {
+        let mut notifications = client.notifications();
+        while let Some(notification) = notifications.next().await {
+            if let ClientNotification::Event { event, .. } = notification {
+                let event = event.as_ref();
+                if event.pubkey == expected_author
+                    && validate_new_round_vtxo_tree_proposal_event(event, expected_initiate_event_id)
+                        .is_ok()
+                {
+                    return Some(event.clone());
+                }
+            }
+        }
+        None
+    })
+    .await
+    .unwrap_or(None);
+
+    Ok(found)
+}
+
+pub async fn wait_for_new_round_vtxo_tree_accept_message(
+    client: &Client,
+    expected_author: PublicKey,
+    expected_initiate_event_id: &EventId,
+    expected_proposal_event_id: &EventId,
+    timeout: Duration,
+) -> Result<Option<Event>> {
+    let filter = Filter::new()
+        .kind(openark_round_kind())
+        .author(expected_author)
+        .hashtag(NEW_ROUND_VTXO_TREE_ACCEPT);
+    client.subscribe(filter).await?;
+
+    let found = tokio::time::timeout(timeout, async {
+        let mut notifications = client.notifications();
+        while let Some(notification) = notifications.next().await {
+            if let ClientNotification::Event { event, .. } = notification {
+                let event = event.as_ref();
+                if event.pubkey == expected_author
+                    && validate_new_round_vtxo_tree_accept_event(
+                        event,
+                        expected_initiate_event_id,
+                        expected_proposal_event_id,
+                    )
+                    .is_ok()
+                {
+                    return Some(event.clone());
+                }
+            }
+        }
+        None
+    })
+    .await
+    .unwrap_or(None);
+
+    Ok(found)
+}
+
+pub async fn wait_for_new_round_prepare_start_message(
+    client: &Client,
+    expected_author: PublicKey,
+    expected_initiate_event_id: &EventId,
+    timeout: Duration,
+) -> Result<Option<Event>> {
+    let filter = Filter::new()
+        .kind(openark_round_kind())
+        .author(expected_author)
+        .hashtag(NEW_ROUND_PREPARE_START);
+    client.subscribe(filter).await?;
+
+    let found = tokio::time::timeout(timeout, async {
+        let mut notifications = client.notifications();
+        while let Some(notification) = notifications.next().await {
+            if let ClientNotification::Event { event, .. } = notification {
+                let event = event.as_ref();
+                if event.pubkey == expected_author
+                    && validate_new_round_prepare_start_event(event, expected_initiate_event_id)
+                        .is_ok()
+                {
+                    return Some(event.clone());
+                }
+            }
+        }
+        None
+    })
+    .await
+    .unwrap_or(None);
+
+    Ok(found)
+}
+
+pub async fn wait_for_new_round_start_prepared_message(
+    client: &Client,
+    expected_author: PublicKey,
+    expected_initiate_event_id: &EventId,
+    expected_prepare_start_event_id: &EventId,
+    timeout: Duration,
+) -> Result<Option<Event>> {
+    let filter = Filter::new()
+        .kind(openark_round_kind())
+        .author(expected_author)
+        .hashtag(NEW_ROUND_START_PREPARED);
+    client.subscribe(filter).await?;
+
+    let found = tokio::time::timeout(timeout, async {
+        let mut notifications = client.notifications();
+        while let Some(notification) = notifications.next().await {
+            if let ClientNotification::Event { event, .. } = notification {
+                let event = event.as_ref();
+                if event.pubkey == expected_author
+                    && validate_new_round_start_prepared_event(
+                        event,
+                        expected_initiate_event_id,
+                        expected_prepare_start_event_id,
+                    )
+                    .is_ok()
                 {
                     return Some(event.clone());
                 }

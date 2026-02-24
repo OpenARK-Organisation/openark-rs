@@ -5,7 +5,11 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nostr_sdk::prelude::Event;
-use openark_rs::{NewRoundJoinKeys, NewRoundJoinOffboard, NewRoundJoinOnboard, NewRoundJoinPayload};
+use openark_rs::{
+    NewRoundJoinKeys, NewRoundJoinOffboard, NewRoundJoinOnboard, NewRoundJoinPayload,
+    NewRoundPrepareStartPayload, NewRoundStartPreparedPayload, NewRoundVtxoTreeAcceptPayload,
+    NewRoundVtxoTreeProposalPayload, NewRoundVtxoTreeProposalRecycle,
+};
 use serde_json::{Value, json};
 use testcontainers::{
     GenericImage,
@@ -43,6 +47,97 @@ pub fn canonical_join_payload(actor: &str) -> NewRoundJoinPayload {
             agent_pubkey: format!("{actor}-agent-pubkey"),
         },
         address_of_last_resort: None,
+    }
+}
+
+pub const PROPOSAL_VTXO_OUTPOINT_0: &str =
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0";
+pub const PROPOSAL_VTXO_OUTPOINT_1: &str =
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1";
+pub const PREPARE_ROOT_TXID: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+pub const PREPARE_FORFEIT_TXID_0: &str =
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+pub const PREPARE_FORFEIT_TXID_1: &str =
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+pub const PREPARE_FUNDING_TXID_0: &str =
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+pub const PREPARE_FORFEIT_OUTPOINT_0: &str =
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:0";
+pub const PREPARE_FORFEIT_OUTPOINT_1: &str =
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:1";
+pub const PREPARE_FUNDING_OUTPOINT_0: &str =
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff:0";
+pub const PREPARE_RECYCLE_TXID: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+#[allow(dead_code)]
+pub fn canonical_vtxo_tree_proposal_payload() -> NewRoundVtxoTreeProposalPayload {
+    NewRoundVtxoTreeProposalPayload {
+        root_tx: "BASE64_ROOT_TX".to_string(),
+        vtxo_tree: vec![
+            "BASE64_VTXO_TX_0".to_string(),
+            "BASE64_VTXO_TX_1".to_string(),
+        ],
+        forfeit_tree: vec![
+            "BASE64_FORFEIT_TX_0".to_string(),
+            "BASE64_FORFEIT_TX_1".to_string(),
+        ],
+        recycle: NewRoundVtxoTreeProposalRecycle {
+            unilateral_tx: "BASE64_RECYCLE_UNILATERAL_TX".to_string(),
+            cooperative_tx: "BASE64_RECYCLE_COOPERATIVE_TX".to_string(),
+        },
+    }
+}
+
+#[allow(dead_code)]
+pub fn canonical_vtxo_tree_accept_payload(actor: &str) -> NewRoundVtxoTreeAcceptPayload {
+    let mut signatures = std::collections::BTreeMap::new();
+    signatures.insert(
+        PROPOSAL_VTXO_OUTPOINT_0.to_string(),
+        format!("BASE64_SIG_V0_{actor}"),
+    );
+    signatures.insert(
+        PROPOSAL_VTXO_OUTPOINT_1.to_string(),
+        format!("BASE64_SIG_V1_{actor}"),
+    );
+    NewRoundVtxoTreeAcceptPayload {
+        vtxo_tree_signatures: signatures,
+    }
+}
+
+#[allow(dead_code)]
+pub fn canonical_prepare_start_payload() -> NewRoundPrepareStartPayload {
+    NewRoundPrepareStartPayload {
+        root_txid: PREPARE_ROOT_TXID.to_string(),
+        forfeit_txids: vec![
+            PREPARE_FORFEIT_TXID_0.to_string(),
+            PREPARE_FORFEIT_TXID_1.to_string(),
+        ],
+        onboarding_txids: vec![PREPARE_FUNDING_TXID_0.to_string()],
+        recycle_txid: PREPARE_RECYCLE_TXID.to_string(),
+    }
+}
+
+#[allow(dead_code)]
+pub fn canonical_start_prepared_payload(actor: &str) -> NewRoundStartPreparedPayload {
+    let mut funding_signatures = std::collections::BTreeMap::new();
+    funding_signatures.insert(
+        PREPARE_FUNDING_OUTPOINT_0.to_string(),
+        format!("BASE64_FUNDING_SIG_{actor}"),
+    );
+    let mut forfeit_signatures = std::collections::BTreeMap::new();
+    forfeit_signatures.insert(
+        PREPARE_FORFEIT_OUTPOINT_0.to_string(),
+        format!("BASE64_FORFEIT_SIG_0_{actor}"),
+    );
+    forfeit_signatures.insert(
+        PREPARE_FORFEIT_OUTPOINT_1.to_string(),
+        format!("BASE64_FORFEIT_SIG_1_{actor}"),
+    );
+
+    NewRoundStartPreparedPayload {
+        funding_signatures,
+        forfeit_signatures,
+        recycle_signature: format!("BASE64_RECYCLE_SIG_{actor}"),
     }
 }
 
