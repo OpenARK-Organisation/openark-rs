@@ -11,11 +11,14 @@ pub use round::{
     NEW_ROUND_START_PREPARED,
     NEW_ROUND_VTXO_TREE_ACCEPT,
     NEW_ROUND_VTXO_TREE_PROPOSAL,
+    ROUND_MESSAGE_VERSION,
     OPENARK_KIND_150,
     event_has_message_type,
+    event_has_message_version,
     event_has_round_id,
     event_is_openark_kind_150,
     event_round_id,
+    parse_new_round_initiate_payload,
 };
 pub use wallet::create_regtest_bdk_wallet;
 

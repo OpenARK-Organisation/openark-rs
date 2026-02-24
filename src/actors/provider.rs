@@ -2,10 +2,12 @@ use nostr_sdk::prelude::*;
 use std::time::Duration;
 
 use crate::round::message::{
-    NEW_ROUND_INITIATE, NEW_ROUND_PREPARE_START, NEW_ROUND_START, NEW_ROUND_START_PREPARED,
-    NEW_ROUND_JOIN, NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
+    NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START, NEW_ROUND_START_PREPARED,
+    NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
 };
-use crate::round::transport::{send_round_message, wait_for_round_message};
+use crate::round::transport::{
+    send_new_round_initiate_message, send_round_message, wait_for_round_message,
+};
 use crate::{PROVIDER_MESSAGE, USER_REPLY_MESSAGE};
 
 pub struct OpenArkServiceProvider {
@@ -56,8 +58,12 @@ impl OpenArkServiceProvider {
         Ok(received)
     }
 
-    pub async fn send_new_round_initiate(&self, round_id: &str, payload: &str) -> Result<()> {
-        send_round_message(&self.client, NEW_ROUND_INITIATE, round_id, payload).await
+    pub async fn send_new_round_initiate(
+        &self,
+        closing_block: u64,
+        recycled_block: u64,
+    ) -> Result<()> {
+        send_new_round_initiate_message(&self.client, closing_block, recycled_block).await
     }
 
     pub async fn wait_for_new_round_join_event(

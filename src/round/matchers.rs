@@ -13,6 +13,15 @@ pub fn event_has_message_type(event: &Event, expected_message_type: &str) -> boo
         .any(|tag| tag.eq_ignore_ascii_case(expected_message_type))
 }
 
+pub fn event_has_message_version(event: &Event, expected_version: &str) -> bool {
+    event
+        .tags
+        .find(TagKind::custom("v"))
+        .and_then(|tag| tag.content())
+        .map(|v| v == expected_version)
+        .unwrap_or(false)
+}
+
 pub fn event_has_round_id(event: &Event, expected_round_id: &str) -> bool {
     event_round_id(event)
         .map(|v| v == expected_round_id)

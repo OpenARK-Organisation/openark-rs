@@ -2,8 +2,9 @@ use nostr_sdk::prelude::Event;
 use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START,
     NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
-    OpenArkServiceProvider, OpenArkUser, event_has_message_type, event_has_round_id,
-    event_is_openark_kind_150,
+    OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_has_message_type,
+    event_has_message_version, event_has_round_id, event_is_openark_kind_150,
+    parse_new_round_initiate_payload,
 };
 use std::time::Duration;
 mod support;
@@ -20,7 +21,15 @@ struct NamedUser {
 fn assert_round_event(event: &Event, message_type: &str) {
     assert!(event_is_openark_kind_150(event));
     assert!(event_has_message_type(event, message_type));
-    assert!(event_has_round_id(event, ROUND_ID));
+    if message_type == NEW_ROUND_INITIATE {
+        assert!(event_has_message_version(event, ROUND_MESSAGE_VERSION));
+        let payload = parse_new_round_initiate_payload(&event.content)
+            .expect("initiate payload should parse");
+        assert_eq!(payload.closing_block, 910000);
+        assert_eq!(payload.recycled_block, 910144);
+    } else {
+        assert!(event_has_round_id(event, ROUND_ID));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -55,10 +64,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     println!("[phase] Round Announcement");
     trace.note("round_announcement", "provider publishing initiate");
     provider
-        .send_new_round_initiate(
-            ROUND_ID,
-            "round_id=r-2026-02-24-003;vtxo_root=VTXO_ROOT;phase=announcement;actor=Steve",
-        )
+        .send_new_round_initiate(910000, 910144)
         .await
         .expect("provider should send new_round_initiate");
     println!("[Steve] published {NEW_ROUND_INITIATE}");
@@ -66,7 +72,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     for named in &users {
         let initiate = named
             .user
-            .wait_for_new_round_initiate_event(provider.pubkey, ROUND_ID, Duration::from_secs(10))
+            .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
             .await
             .expect("user should wait for initiate")
             .expect("user should receive initiate");

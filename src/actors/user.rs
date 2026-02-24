@@ -2,10 +2,12 @@ use nostr_sdk::prelude::*;
 use std::time::Duration;
 
 use crate::round::message::{
-    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START,
-    NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
+    NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START, NEW_ROUND_START_PREPARED,
+    NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
 };
-use crate::round::transport::{send_round_message, wait_for_round_message};
+use crate::round::transport::{
+    send_round_message, wait_for_new_round_initiate_message, wait_for_round_message,
+};
 use crate::{PROVIDER_MESSAGE, USER_REPLY_MESSAGE};
 
 pub struct OpenArkUser {
@@ -58,17 +60,9 @@ impl OpenArkUser {
     pub async fn wait_for_new_round_initiate_event(
         &self,
         provider_pubkey: PublicKey,
-        round_id: &str,
         timeout: Duration,
     ) -> Result<Option<Event>> {
-        wait_for_round_message(
-            &self.client,
-            provider_pubkey,
-            NEW_ROUND_INITIATE,
-            round_id,
-            timeout,
-        )
-        .await
+        wait_for_new_round_initiate_message(&self.client, provider_pubkey, timeout).await
     }
 
     pub async fn send_new_round_join(&self, round_id: &str, payload: &str) -> Result<()> {

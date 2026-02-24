@@ -1,6 +1,7 @@
 use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, OpenArkServiceProvider, OpenArkUser, event_has_message_type,
-    event_has_round_id, event_is_openark_kind_150,
+    event_has_message_version, event_has_round_id, event_is_openark_kind_150,
+    parse_new_round_initiate_payload, ROUND_MESSAGE_VERSION,
 };
 use std::time::Duration;
 mod support;
@@ -28,17 +29,14 @@ async fn step1_two_actor_kind150_round_handshake() {
     println!("[test] clients settled, starting handshake flow");
     println!("[Steve] publishing {NEW_ROUND_INITIATE} round_id={ROUND_ID}");
     provider
-        .send_new_round_initiate(
-            ROUND_ID,
-            "round_id=r-2026-02-24-001;vtxo_root=VTXO_ROOT;actor=Steve",
-        )
+        .send_new_round_initiate(910000, 910144)
         .await
         .expect("provider should send new_round_initiate");
     println!("[Steve] published {NEW_ROUND_INITIATE}");
 
     println!("[Alice] waiting for {NEW_ROUND_INITIATE} round_id={ROUND_ID}");
     let initiate = user
-        .wait_for_new_round_initiate_event(provider.pubkey, ROUND_ID, Duration::from_secs(10))
+        .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
         .await
         .expect("user should wait for initiate")
         .expect("user should receive new_round_initiate");
@@ -46,8 +44,11 @@ async fn step1_two_actor_kind150_round_handshake() {
     println!("[Alice] validating initiate assertions");
     assert!(event_is_openark_kind_150(&initiate));
     assert!(event_has_message_type(&initiate, NEW_ROUND_INITIATE));
-    assert!(event_has_round_id(&initiate, ROUND_ID));
-    assert!(initiate.content.contains("VTXO_ROOT"));
+    assert!(event_has_message_version(&initiate, ROUND_MESSAGE_VERSION));
+    let initiate_payload = parse_new_round_initiate_payload(&initiate.content)
+        .expect("initiate payload should parse");
+    assert_eq!(initiate_payload.closing_block, 910000);
+    assert_eq!(initiate_payload.recycled_block, 910144);
 
     println!("[Alice] publishing {NEW_ROUND_JOIN} round_id={ROUND_ID}");
     user.send_new_round_join(
