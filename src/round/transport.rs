@@ -26,6 +26,14 @@ pub async fn send_round_message(
     round_id: &str,
     payload: &str,
 ) -> Result<()> {
+    assert_ne!(
+        message_type, NEW_ROUND_INITIATE,
+        "new_round_initiate must use canonical initiate builder"
+    );
+    assert_ne!(
+        message_type, NEW_ROUND_JOIN,
+        "new_round_join must use canonical join builder"
+    );
     let event = EventBuilder::new(openark_round_kind(), payload.to_string())
         .tags(round_tags(message_type, round_id));
     client.send_event_builder(event).await?;
@@ -80,6 +88,14 @@ pub async fn wait_for_round_message(
     expected_round_id: &str,
     timeout: Duration,
 ) -> Result<Option<Event>> {
+    assert_ne!(
+        expected_message_type, NEW_ROUND_INITIATE,
+        "new_round_initiate must use canonical initiate wait path"
+    );
+    assert_ne!(
+        expected_message_type, NEW_ROUND_JOIN,
+        "new_round_join must use canonical join wait path"
+    );
     let filter = Filter::new()
         .kind(openark_round_kind())
         .author(expected_author)
