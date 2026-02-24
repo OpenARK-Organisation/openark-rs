@@ -24,6 +24,10 @@ fn kind_150() -> Kind {
     Kind::Custom(OPENARK_KIND_150)
 }
 
+fn valid_join_payload_json() -> &'static str {
+    r#"{"onboard":[{"outpoint":"alice:0"}],"offboard":[],"keys":{"user_pubkey":"alice-user","agent_pubkey":"alice-agent"}}"#
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failure_initiate_missing_v_tag_is_rejected() {
     let (_relay_container, relay_url) = start_relay().await;
@@ -111,7 +115,10 @@ async fn failure_join_missing_or_wrong_e_tag_is_rejected() {
     let expected_round_ref = initiate.id;
 
     // Missing e tag.
-    let missing_e = EventBuilder::new(kind_150(), "join-without-e").tags([Tag::hashtag(NEW_ROUND_JOIN)]);
+    let missing_e = EventBuilder::new(kind_150(), valid_join_payload_json()).tags([
+        Tag::hashtag(NEW_ROUND_JOIN),
+        Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
+    ]);
     raw_user
         .send_event_builder(missing_e)
         .await
@@ -127,8 +134,9 @@ async fn failure_join_missing_or_wrong_e_tag_is_rejected() {
     );
 
     // Wrong e tag.
-    let wrong_e = EventBuilder::new(kind_150(), "join-with-wrong-e").tags([
+    let wrong_e = EventBuilder::new(kind_150(), valid_join_payload_json()).tags([
         Tag::hashtag(NEW_ROUND_JOIN),
+        Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
         Tag::custom(
             TagKind::custom("e"),
             ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
@@ -146,5 +154,203 @@ async fn failure_join_missing_or_wrong_e_tag_is_rejected() {
     assert!(
         wrong_e_received.is_none(),
         "join with wrong e tag must be ignored"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failure_join_missing_v_tag_is_rejected() {
+    let (_relay_container, relay_url) = start_relay().await;
+    let provider = OpenArkServiceProvider::connect(&relay_url)
+        .await
+        .expect("provider should connect");
+    let user = OpenArkUser::connect(&relay_url)
+        .await
+        .expect("user should connect");
+    let (raw_user, raw_user_pubkey) = connect_raw_client(&relay_url).await;
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    provider
+        .send_new_round_initiate(910000, 910144)
+        .await
+        .expect("provider should publish initiate");
+    let initiate = user
+        .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
+        .await
+        .expect("wait should succeed")
+        .expect("initiate should be received");
+    let expected_round_ref = initiate.id;
+
+    let missing_v = EventBuilder::new(kind_150(), valid_join_payload_json()).tags([
+        Tag::hashtag(NEW_ROUND_JOIN),
+        Tag::custom(TagKind::custom("e"), [expected_round_ref.to_string()]),
+    ]);
+    raw_user
+        .send_event_builder(missing_v)
+        .await
+        .expect("missing-v join should publish");
+
+    let received = provider
+        .wait_for_new_round_join_event(raw_user_pubkey, &expected_round_ref, Duration::from_secs(1))
+        .await
+        .expect("wait should succeed");
+    assert!(received.is_none(), "join without v tag must be ignored");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failure_join_invalid_json_is_rejected() {
+    let (_relay_container, relay_url) = start_relay().await;
+    let provider = OpenArkServiceProvider::connect(&relay_url)
+        .await
+        .expect("provider should connect");
+    let user = OpenArkUser::connect(&relay_url)
+        .await
+        .expect("user should connect");
+    let (raw_user, raw_user_pubkey) = connect_raw_client(&relay_url).await;
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    provider
+        .send_new_round_initiate(910000, 910144)
+        .await
+        .expect("provider should publish initiate");
+    let initiate = user
+        .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
+        .await
+        .expect("wait should succeed")
+        .expect("initiate should be received");
+    let expected_round_ref = initiate.id;
+
+    let invalid_json = EventBuilder::new(kind_150(), "not-json").tags([
+        Tag::hashtag(NEW_ROUND_JOIN),
+        Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
+        Tag::custom(TagKind::custom("e"), [expected_round_ref.to_string()]),
+    ]);
+    raw_user
+        .send_event_builder(invalid_json)
+        .await
+        .expect("invalid-json join should publish");
+
+    let received = provider
+        .wait_for_new_round_join_event(raw_user_pubkey, &expected_round_ref, Duration::from_secs(1))
+        .await
+        .expect("wait should succeed");
+    assert!(received.is_none(), "join with invalid JSON must be ignored");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failure_join_missing_keys_or_invalid_outpoint_is_rejected() {
+    let (_relay_container, relay_url) = start_relay().await;
+    let provider = OpenArkServiceProvider::connect(&relay_url)
+        .await
+        .expect("provider should connect");
+    let user = OpenArkUser::connect(&relay_url)
+        .await
+        .expect("user should connect");
+    let (raw_user, raw_user_pubkey) = connect_raw_client(&relay_url).await;
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    provider
+        .send_new_round_initiate(910000, 910144)
+        .await
+        .expect("provider should publish initiate");
+    let initiate = user
+        .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
+        .await
+        .expect("wait should succeed")
+        .expect("initiate should be received");
+    let expected_round_ref = initiate.id;
+
+    let missing_keys = EventBuilder::new(
+        kind_150(),
+        r#"{"onboard":[{"outpoint":"alice:0"}],"offboard":[]}"#,
+    )
+    .tags([
+        Tag::hashtag(NEW_ROUND_JOIN),
+        Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
+        Tag::custom(TagKind::custom("e"), [expected_round_ref.to_string()]),
+    ]);
+    raw_user
+        .send_event_builder(missing_keys)
+        .await
+        .expect("missing-keys join should publish");
+    let received_missing_keys = provider
+        .wait_for_new_round_join_event(raw_user_pubkey, &expected_round_ref, Duration::from_secs(1))
+        .await
+        .expect("wait should succeed");
+    assert!(
+        received_missing_keys.is_none(),
+        "join missing keys must be ignored"
+    );
+
+    let invalid_outpoint = EventBuilder::new(
+        kind_150(),
+        r#"{"onboard":[{"outpoint":123}],"offboard":[],"keys":{"user_pubkey":"u","agent_pubkey":"a"}}"#,
+    )
+    .tags([
+        Tag::hashtag(NEW_ROUND_JOIN),
+        Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
+        Tag::custom(TagKind::custom("e"), [expected_round_ref.to_string()]),
+    ]);
+    raw_user
+        .send_event_builder(invalid_outpoint)
+        .await
+        .expect("invalid-outpoint join should publish");
+    let received_invalid_outpoint = provider
+        .wait_for_new_round_join_event(raw_user_pubkey, &expected_round_ref, Duration::from_secs(1))
+        .await
+        .expect("wait should succeed");
+    assert!(
+        received_invalid_outpoint.is_none(),
+        "join with invalid onboard outpoint must be ignored"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failure_join_with_round_id_in_content_is_rejected() {
+    let (_relay_container, relay_url) = start_relay().await;
+    let provider = OpenArkServiceProvider::connect(&relay_url)
+        .await
+        .expect("provider should connect");
+    let user = OpenArkUser::connect(&relay_url)
+        .await
+        .expect("user should connect");
+    let (raw_user, raw_user_pubkey) = connect_raw_client(&relay_url).await;
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    provider
+        .send_new_round_initiate(910000, 910144)
+        .await
+        .expect("provider should publish initiate");
+    let initiate = user
+        .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
+        .await
+        .expect("wait should succeed")
+        .expect("initiate should be received");
+    let expected_round_ref = initiate.id;
+
+    let forbidden_round_id = EventBuilder::new(
+        kind_150(),
+        r#"{"round_id":"legacy","onboard":[{"outpoint":"alice:0"}],"offboard":[],"keys":{"user_pubkey":"u","agent_pubkey":"a"}}"#,
+    )
+    .tags([
+        Tag::hashtag(NEW_ROUND_JOIN),
+        Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
+        Tag::custom(TagKind::custom("e"), [expected_round_ref.to_string()]),
+    ]);
+    raw_user
+        .send_event_builder(forbidden_round_id)
+        .await
+        .expect("forbidden-round-id join should publish");
+
+    let received = provider
+        .wait_for_new_round_join_event(raw_user_pubkey, &expected_round_ref, Duration::from_secs(1))
+        .await
+        .expect("wait should succeed");
+    assert!(
+        received.is_none(),
+        "join containing round_id in content must be ignored"
     );
 }
