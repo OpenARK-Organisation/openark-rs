@@ -5,15 +5,14 @@ use openark_rs::{
     event_has_message_version, event_has_round_id, event_is_openark_kind_150,
     parse_new_round_initiate_payload, parse_new_round_join_payload,
     parse_new_round_start_prepared_payload, parse_new_round_vtxo_tree_accept_payload,
-    validate_new_round_prepare_start_event, validate_new_round_start_prepared_event,
+    validate_new_round_start_prepared_event,
     validate_new_round_vtxo_tree_accept_event, validate_new_round_vtxo_tree_proposal_event,
 };
 use std::time::Duration;
 mod support;
 use support::{
-    TraceRecorder, canonical_join_payload, canonical_prepare_start_payload,
-    canonical_start_prepared_payload, canonical_vtxo_tree_accept_payload,
-    canonical_vtxo_tree_proposal_payload, start_relay,
+    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload,
+    canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, start_relay,
 };
 
 fn assert_round_event(
@@ -41,7 +40,7 @@ fn assert_round_event(
         assert!(event_has_event_reference(event, round_ref));
     } else if message_type == NEW_ROUND_PREPARE_START {
         let round_ref = round_ref.expect("round ref should be set");
-        assert!(validate_new_round_prepare_start_event(event, round_ref).is_ok());
+        assert!(event_has_event_reference(event, round_ref));
     } else if message_type == NEW_ROUND_START_PREPARED {
         let round_ref = round_ref.expect("round ref should be set");
         assert!(event_has_event_reference(event, round_ref));
@@ -410,9 +409,8 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
             .expect("receive accept");
     }
 
-    let prepare_start_payload = canonical_prepare_start_payload();
     provider
-        .send_new_round_prepare_start(&round_ref, &prepare_start_payload)
+        .send_new_round_prepare_start(&round_ref, &proposal_ref)
         .await
         .expect("prepare start send");
     println!("[Steve] published {NEW_ROUND_PREPARE_START}");
@@ -423,6 +421,7 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
             .wait_for_new_round_prepare_start_event(
                 provider.pubkey,
                 &round_ref,
+                &proposal_ref,
                 Duration::from_secs(10),
             )
             .await
@@ -597,9 +596,8 @@ async fn failure_late_start_prepared_blocks_activation() {
             .expect("receive accept");
     }
 
-    let prepare_start_payload = canonical_prepare_start_payload();
     provider
-        .send_new_round_prepare_start(&round_ref, &prepare_start_payload)
+        .send_new_round_prepare_start(&round_ref, &proposal_ref)
         .await
         .expect("prepare start send");
     let mut prepare_start_ref: Option<nostr_sdk::prelude::EventId> = None;
@@ -608,6 +606,7 @@ async fn failure_late_start_prepared_blocks_activation() {
             .wait_for_new_round_prepare_start_event(
                 provider.pubkey,
                 &round_ref,
+                &proposal_ref,
                 Duration::from_secs(10),
             )
             .await

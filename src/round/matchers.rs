@@ -6,7 +6,7 @@ use super::message::{
     NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL, ROUND_MESSAGE_VERSION,
     openark_round_kind,
     parse_new_round_initiate_payload, parse_new_round_join_payload,
-    parse_new_round_prepare_start_payload, parse_new_round_start_prepared_payload,
+    parse_new_round_start_prepared_payload,
     parse_new_round_vtxo_tree_accept_payload, parse_new_round_vtxo_tree_proposal_payload,
 };
 
@@ -166,6 +166,7 @@ pub fn validate_new_round_vtxo_tree_accept_event(
 pub fn validate_new_round_prepare_start_event(
     event: &Event,
     expected_initiate_event_id: &EventId,
+    expected_proposal_event_id: &EventId,
 ) -> Result<(), &'static str> {
     if !event_is_openark_kind_150(event) {
         return Err("wrong_kind");
@@ -176,10 +177,13 @@ pub fn validate_new_round_prepare_start_event(
     if !event_has_message_version(event, ROUND_MESSAGE_VERSION) {
         return Err("missing_or_wrong_v");
     }
-    if !event_has_event_reference(event, expected_initiate_event_id) {
-        return Err("missing_or_wrong_e");
+    if event_event_reference_by_marker(event, Marker::Root) != Some(*expected_initiate_event_id) {
+        return Err("missing_or_wrong_root_reference");
     }
-    if parse_new_round_prepare_start_payload(&event.content).is_none() {
+    if event_event_reference_by_marker(event, Marker::Reply) != Some(*expected_proposal_event_id) {
+        return Err("missing_or_wrong_reply_reference");
+    }
+    if !event.content.is_empty() {
         return Err("invalid_prepare_start_payload");
     }
     Ok(())

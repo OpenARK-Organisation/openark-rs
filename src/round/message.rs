@@ -66,14 +66,6 @@ pub struct NewRoundVtxoTreeAcceptPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NewRoundPrepareStartPayload {
-    pub root_txid: String,
-    pub forfeit_txids: Vec<String>,
-    pub onboarding_txids: Vec<String>,
-    pub recycle_txid: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewRoundStartPreparedPayload {
     pub funding_signatures: BTreeMap<String, String>,
     pub forfeit_signatures: BTreeMap<String, String>,
@@ -222,60 +214,6 @@ pub fn parse_new_round_vtxo_tree_accept_payload(content: &str) -> Option<NewRoun
     }
     Some(NewRoundVtxoTreeAcceptPayload {
         vtxo_tree_signatures: signatures,
-    })
-}
-
-pub fn new_round_prepare_start_payload_json(payload: &NewRoundPrepareStartPayload) -> String {
-    serde_json::json!({
-        "root_txid": payload.root_txid,
-        "forfeit_txids": payload.forfeit_txids,
-        "onboarding_txids": payload.onboarding_txids,
-        "recycle_txid": payload.recycle_txid
-    })
-    .to_string()
-}
-
-pub fn parse_new_round_prepare_start_payload(content: &str) -> Option<NewRoundPrepareStartPayload> {
-    let value: Value = serde_json::from_str(content).ok()?;
-    let root_txid = value.get("root_txid")?.as_str()?;
-    if !looks_like_hex_txid(root_txid) {
-        return None;
-    }
-    let recycle_txid = value.get("recycle_txid")?.as_str()?;
-    if !looks_like_hex_txid(recycle_txid) {
-        return None;
-    }
-    let forfeit_txids = value
-        .get("forfeit_txids")?
-        .as_array()?
-        .iter()
-        .map(|entry| {
-            let txid = entry.as_str()?;
-            if looks_like_hex_txid(txid) {
-                Some(txid.to_string())
-            } else {
-                None
-            }
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let onboarding_txids = value
-        .get("onboarding_txids")?
-        .as_array()?
-        .iter()
-        .map(|entry| {
-            let txid = entry.as_str()?;
-            if looks_like_hex_txid(txid) {
-                Some(txid.to_string())
-            } else {
-                None
-            }
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some(NewRoundPrepareStartPayload {
-        root_txid: root_txid.to_string(),
-        forfeit_txids,
-        onboarding_txids,
-        recycle_txid: recycle_txid.to_string(),
     })
 }
 
@@ -428,23 +366,36 @@ pub fn new_round_vtxo_tree_accept_event_builder(
     ))
 }
 
-pub fn new_round_prepare_start_tags(initiate_event_id: &EventId) -> Vec<Tag> {
+pub fn new_round_prepare_start_tags(
+    initiate_event_id: &EventId,
+    proposal_event_id: &EventId,
+) -> Vec<Tag> {
     vec![
         Tag::hashtag(NEW_ROUND_PREPARE_START),
         Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
-        Tag::custom(TagKind::custom("e"), [initiate_event_id.to_string()]),
+        Tag::from_standardized(TagStandard::Event {
+            event_id: *initiate_event_id,
+            relay_url: None,
+            marker: Some(Marker::Root),
+            public_key: None,
+            uppercase: false,
+        }),
+        Tag::from_standardized(TagStandard::Event {
+            event_id: *proposal_event_id,
+            relay_url: None,
+            marker: Some(Marker::Reply),
+            public_key: None,
+            uppercase: false,
+        }),
     ]
 }
 
 pub fn new_round_prepare_start_event_builder(
     initiate_event_id: &EventId,
-    payload: &NewRoundPrepareStartPayload,
+    proposal_event_id: &EventId,
 ) -> EventBuilder {
-    EventBuilder::new(
-        openark_round_kind(),
-        new_round_prepare_start_payload_json(payload),
-    )
-    .tags(new_round_prepare_start_tags(initiate_event_id))
+    EventBuilder::new(openark_round_kind(), "")
+        .tags(new_round_prepare_start_tags(initiate_event_id, proposal_event_id))
 }
 
 pub fn new_round_start_prepared_tags(

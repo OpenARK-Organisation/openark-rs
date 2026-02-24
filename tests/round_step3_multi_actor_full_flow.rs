@@ -6,7 +6,7 @@ use openark_rs::{
     event_has_message_type, event_has_event_reference, event_has_message_version,
     event_has_round_id, event_is_openark_kind_150,
     parse_new_round_initiate_payload, parse_new_round_join_payload,
-    parse_new_round_prepare_start_payload, parse_new_round_start_prepared_payload,
+    parse_new_round_start_prepared_payload,
     parse_new_round_vtxo_tree_accept_payload, parse_new_round_vtxo_tree_proposal_payload,
     validate_new_round_prepare_start_event, validate_new_round_start_prepared_event,
     validate_new_round_vtxo_tree_accept_event, validate_new_round_vtxo_tree_proposal_event,
@@ -14,9 +14,8 @@ use openark_rs::{
 use std::time::Duration;
 mod support;
 use support::{
-    TraceRecorder, canonical_join_payload, canonical_prepare_start_payload,
-    canonical_start_prepared_payload, canonical_vtxo_tree_accept_payload,
-    canonical_vtxo_tree_proposal_payload, start_relay,
+    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload,
+    canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, start_relay,
 };
 
 const ROUND_ID: &str = "r-2026-02-24-003";
@@ -222,10 +221,12 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
 
     println!("[phase] Start Preparation");
     trace.note("start_preparation", "provider publishing prepare_start");
-    let prepare_start_payload = canonical_prepare_start_payload();
     let round_ref_for_prepare = round_ref.as_ref().expect("round ref should be present");
     provider
-        .send_new_round_prepare_start(round_ref_for_prepare, &prepare_start_payload)
+        .send_new_round_prepare_start(
+            round_ref_for_prepare,
+            proposal_ref.as_ref().expect("proposal ref should be present"),
+        )
         .await
         .expect("provider should send prepare_start");
     println!("[Steve] published {NEW_ROUND_PREPARE_START}");
@@ -237,6 +238,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .wait_for_new_round_prepare_start_event(
                 provider.pubkey,
                 round_ref_for_prepare,
+                proposal_ref.as_ref().expect("proposal ref should be present"),
                 Duration::from_secs(10),
             )
             .await
@@ -248,8 +250,15 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             NEW_ROUND_PREPARE_START,
             Some(round_ref.as_ref().expect("round ref should be present")),
         );
-        assert!(validate_new_round_prepare_start_event(&prepare_start, round_ref_for_prepare).is_ok());
-        assert!(parse_new_round_prepare_start_payload(&prepare_start.content).is_some());
+        assert!(
+            validate_new_round_prepare_start_event(
+                &prepare_start,
+                round_ref_for_prepare,
+                proposal_ref.as_ref().expect("proposal ref should be present"),
+            )
+            .is_ok()
+        );
+        assert!(prepare_start.content.is_empty());
         if let Some(existing) = prepare_start_ref.as_ref() {
             assert_eq!(existing, &prepare_start.id);
         } else {

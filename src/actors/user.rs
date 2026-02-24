@@ -110,12 +110,14 @@ impl OpenArkUser {
         &self,
         provider_pubkey: PublicKey,
         initiate_event_id: &EventId,
+        proposal_event_id: &EventId,
         timeout: Duration,
     ) -> Result<Option<Event>> {
         wait_for_new_round_prepare_start_message(
             &self.client,
             provider_pubkey,
             initiate_event_id,
+            proposal_event_id,
             timeout,
         ).await
     }

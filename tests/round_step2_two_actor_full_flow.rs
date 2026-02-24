@@ -6,7 +6,7 @@ use openark_rs::{
     event_has_message_type, event_has_event_reference, event_has_message_version,
     event_has_round_id, event_is_openark_kind_150,
     parse_new_round_initiate_payload, parse_new_round_join_payload,
-    parse_new_round_prepare_start_payload, parse_new_round_start_prepared_payload,
+    parse_new_round_start_prepared_payload,
     parse_new_round_vtxo_tree_accept_payload, parse_new_round_vtxo_tree_proposal_payload,
     validate_new_round_initiate_event, validate_new_round_join_event_reference,
     validate_new_round_prepare_start_event, validate_new_round_start_prepared_event,
@@ -15,8 +15,8 @@ use openark_rs::{
 use std::time::Duration;
 mod support;
 use support::{
-    PREPARE_FUNDING_OUTPOINT_0, PREPARE_ROOT_TXID, PROPOSAL_VTXO_OUTPOINT_0, TraceRecorder,
-    canonical_join_payload, canonical_prepare_start_payload, canonical_start_prepared_payload,
+    PREPARE_FUNDING_OUTPOINT_0, PROPOSAL_VTXO_OUTPOINT_0, TraceRecorder,
+    canonical_join_payload, canonical_start_prepared_payload,
     canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, start_relay,
 };
 
@@ -178,24 +178,26 @@ async fn step2_two_actor_kind150_full_phase_flow() {
 
     println!("[phase] Start Preparation");
     trace.note("start_preparation", "provider publishing prepare_start");
-    let prepare_payload = canonical_prepare_start_payload();
     provider
-        .send_new_round_prepare_start(&round_ref, &prepare_payload)
+        .send_new_round_prepare_start(&round_ref, &proposal_ref)
         .await
         .expect("provider should send prepare_start");
     println!("[Steve] published {NEW_ROUND_PREPARE_START}");
 
     let prepare_start = user
-        .wait_for_new_round_prepare_start_event(provider.pubkey, &round_ref, Duration::from_secs(10))
+        .wait_for_new_round_prepare_start_event(
+            provider.pubkey,
+            &round_ref,
+            &proposal_ref,
+            Duration::from_secs(10),
+        )
         .await
         .expect("user should wait for prepare_start")
         .expect("user should receive prepare_start");
     trace.event("Alice", "received prepare_start", &prepare_start);
     assert_round_event(&prepare_start, NEW_ROUND_PREPARE_START, Some(&round_ref));
-    assert!(validate_new_round_prepare_start_event(&prepare_start, &round_ref).is_ok());
-    let parsed_prepare_start = parse_new_round_prepare_start_payload(&prepare_start.content)
-        .expect("prepare_start payload should parse");
-    assert_eq!(parsed_prepare_start.root_txid, PREPARE_ROOT_TXID);
+    assert!(validate_new_round_prepare_start_event(&prepare_start, &round_ref, &proposal_ref).is_ok());
+    assert!(prepare_start.content.is_empty());
     let prepare_start_ref = prepare_start.id;
     observed_order.push(NEW_ROUND_PREPARE_START);
 

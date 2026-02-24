@@ -2,7 +2,7 @@ use nostr_sdk::prelude::*;
 use std::time::Duration;
 
 use crate::round::message::{
-    NEW_ROUND_START, NewRoundPrepareStartPayload, NewRoundVtxoTreeProposalPayload,
+    NEW_ROUND_START, NewRoundVtxoTreeProposalPayload,
 };
 use crate::round::transport::{
     send_new_round_initiate_message, send_new_round_prepare_start_message,
@@ -104,9 +104,9 @@ impl OpenArkServiceProvider {
     pub async fn send_new_round_prepare_start(
         &self,
         initiate_event_id: &EventId,
-        payload: &NewRoundPrepareStartPayload,
+        proposal_event_id: &EventId,
     ) -> Result<()> {
-        send_new_round_prepare_start_message(&self.client, initiate_event_id, payload).await
+        send_new_round_prepare_start_message(&self.client, initiate_event_id, proposal_event_id).await
     }
 
     pub async fn wait_for_new_round_start_prepared_event(
