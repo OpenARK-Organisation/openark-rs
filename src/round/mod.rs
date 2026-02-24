@@ -30,5 +30,7 @@ pub use message::{
     ROUND_MESSAGE_VERSION,
     new_round_initiate_event_builder,
     new_round_join_event_builder,
+    new_round_join_payload_json,
+    parse_new_round_join_payload,
     parse_new_round_initiate_payload,
 };
