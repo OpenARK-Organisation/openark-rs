@@ -7,7 +7,7 @@ use openark_rs::{
 };
 use std::time::Duration;
 mod support;
-use support::{TraceRecorder, start_relay};
+use support::{TraceRecorder, canonical_join_payload, start_relay};
 
 fn assert_round_event(
     event: &nostr_sdk::prelude::Event,
@@ -81,18 +81,12 @@ async fn failure_missing_new_round_join_blocks_phase() {
     let round_ref = round_ref.expect("round ref should be present");
 
     alice
-        .send_new_round_join(
-            &round_ref,
-            "round_id=r-2026-02-24-004-a;transition=VTXO_ROOT_SIGNATURE_Alice",
-        )
+        .send_new_round_join(&round_ref, &canonical_join_payload("Alice"))
         .await
         .expect("alice join");
-    bob.send_new_round_join(
-        &round_ref,
-        "round_id=r-2026-02-24-004-a;transition=VTXO_ROOT_SIGNATURE_Bob",
-    )
-    .await
-    .expect("bob join");
+    bob.send_new_round_join(&round_ref, &canonical_join_payload("Bob"))
+        .await
+        .expect("bob join");
     println!("[Alice/Bob] published {NEW_ROUND_JOIN}; [Carol] intentionally silent");
 
     let mut joins = 0usize;
@@ -158,18 +152,12 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
     let round_ref = round_ref.expect("round ref should be present");
 
     alice
-        .send_new_round_join(
-            &round_ref,
-            "round_id=r-2026-02-24-004-b;transition=VTXO_ROOT_SIGNATURE_Alice",
-        )
+        .send_new_round_join(&round_ref, &canonical_join_payload("Alice"))
         .await
         .expect("alice join");
-    bob.send_new_round_join(
-        &round_ref,
-        "round_id=r-2026-02-24-004-b;transition=VTXO_ROOT_SIGNATURE_Bob",
-    )
-    .await
-    .expect("bob join");
+    bob.send_new_round_join(&round_ref, &canonical_join_payload("Bob"))
+        .await
+        .expect("bob join");
 
     for pubkey in [alice.pubkey, bob.pubkey] {
         let _ = provider
@@ -287,18 +275,12 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
     let round_ref = round_ref.expect("round ref should be present");
 
     alice
-        .send_new_round_join(
-            &round_ref,
-            "round_id=r-2026-02-24-004-c;transition=VTXO_ROOT_SIGNATURE_Alice",
-        )
+        .send_new_round_join(&round_ref, &canonical_join_payload("Alice"))
         .await
         .expect("alice join");
-    bob.send_new_round_join(
-        &round_ref,
-        "round_id=r-2026-02-24-004-c;transition=VTXO_ROOT_SIGNATURE_Bob",
-    )
-    .await
-    .expect("bob join");
+    bob.send_new_round_join(&round_ref, &canonical_join_payload("Bob"))
+        .await
+        .expect("bob join");
     for pubkey in [alice.pubkey, bob.pubkey] {
         let _ = provider
             .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
@@ -435,18 +417,12 @@ async fn failure_late_start_prepared_blocks_activation() {
     let round_ref = round_ref.expect("round ref should be present");
 
     alice
-        .send_new_round_join(
-            &round_ref,
-            "round_id=r-2026-02-24-004-d;transition=VTXO_ROOT_SIGNATURE_Alice",
-        )
+        .send_new_round_join(&round_ref, &canonical_join_payload("Alice"))
         .await
         .expect("alice join");
-    bob.send_new_round_join(
-        &round_ref,
-        "round_id=r-2026-02-24-004-d;transition=VTXO_ROOT_SIGNATURE_Bob",
-    )
-    .await
-    .expect("bob join");
+    bob.send_new_round_join(&round_ref, &canonical_join_payload("Bob"))
+        .await
+        .expect("bob join");
     for pubkey in [alice.pubkey, bob.pubkey] {
         let _ = provider
             .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))

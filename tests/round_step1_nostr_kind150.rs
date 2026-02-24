@@ -2,12 +2,12 @@ use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, OpenArkServiceProvider, OpenArkUser, event_event_reference,
     event_has_message_type, event_has_event_reference, event_has_message_version,
     event_is_openark_kind_150,
-    parse_new_round_initiate_payload, validate_new_round_initiate_event,
+    parse_new_round_initiate_payload, parse_new_round_join_payload, validate_new_round_initiate_event,
     validate_new_round_join_event_reference, ROUND_MESSAGE_VERSION,
 };
 use std::time::Duration;
 mod support;
-use support::{TraceRecorder, start_relay};
+use support::{TraceRecorder, canonical_join_payload, start_relay};
 
 const ROUND_ID: &str = "r-2026-02-24-001";
 
@@ -59,12 +59,9 @@ async fn step1_two_actor_kind150_round_handshake() {
     println!("[round] reference={round_ref}");
 
     println!("[Alice] publishing {NEW_ROUND_JOIN} round_id={ROUND_ID}");
-    user.send_new_round_join(
-        &round_ref,
-        "round_id=r-2026-02-24-001;transition=VTXO_ROOT_SIGNATURE;actor=Alice",
-    )
-    .await
-    .expect("user should send new_round_join");
+    user.send_new_round_join(&round_ref, &canonical_join_payload("Alice"))
+        .await
+        .expect("user should send new_round_join");
     println!("[Alice] published {NEW_ROUND_JOIN}");
 
     println!("[Steve] waiting for {NEW_ROUND_JOIN} from Alice");
@@ -86,7 +83,10 @@ async fn step1_two_actor_kind150_round_handshake() {
         "[round] join_event_reference={}",
         event_event_reference(&join).expect("join should have e reference")
     );
-    assert!(join.content.contains("VTXO_ROOT_SIGNATURE"));
+    assert!(
+        parse_new_round_join_payload(&join.content).is_some(),
+        "join content should parse as canonical JSON payload"
+    );
     println!("[test] step1_two_actor_kind150_round_handshake passed");
     trace.finish(
         "passed",

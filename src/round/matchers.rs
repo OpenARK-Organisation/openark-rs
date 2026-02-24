@@ -1,8 +1,9 @@
 use nostr_sdk::prelude::*;
+use serde_json::Value;
 
 use super::message::{
-    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, ROUND_MESSAGE_VERSION, parse_new_round_initiate_payload,
-    openark_round_kind,
+    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, ROUND_MESSAGE_VERSION, openark_round_kind,
+    parse_new_round_initiate_payload, parse_new_round_join_payload,
 };
 
 pub fn event_is_openark_kind_150(event: &Event) -> bool {
@@ -71,8 +72,18 @@ pub fn validate_new_round_join_event_reference(
     if !event_has_message_type(event, NEW_ROUND_JOIN) {
         return Err("missing_or_wrong_t");
     }
+    if !event_has_message_version(event, ROUND_MESSAGE_VERSION) {
+        return Err("missing_or_wrong_v");
+    }
     if !event_has_event_reference(event, expected_initiate_event_id) {
         return Err("missing_or_wrong_e");
+    }
+    let parsed: Value = serde_json::from_str(&event.content).map_err(|_| "invalid_join_payload")?;
+    if parsed.get("round_id").is_some() {
+        return Err("forbidden_round_id_in_content");
+    }
+    if parse_new_round_join_payload(&event.content).is_none() {
+        return Err("invalid_join_payload");
     }
     Ok(())
 }

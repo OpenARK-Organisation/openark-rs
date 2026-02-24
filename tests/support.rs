@@ -30,6 +30,22 @@ pub async fn start_relay() -> (testcontainers::ContainerAsync<GenericImage>, Str
     (container, format!("ws://localhost:{host_port}"))
 }
 
+pub fn canonical_join_payload(actor: &str) -> String {
+    json!({
+        "onboard": [
+            {
+                "outpoint": format!("{}:0", actor.to_lowercase())
+            }
+        ],
+        "offboard": [],
+        "keys": {
+            "user_pubkey": format!("{actor}-user-pubkey"),
+            "agent_pubkey": format!("{actor}-agent-pubkey")
+        }
+    })
+    .to_string()
+}
+
 pub struct TraceRecorder {
     test_name: String,
     round_id: Option<String>,

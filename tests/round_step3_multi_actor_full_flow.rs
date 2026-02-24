@@ -9,7 +9,7 @@ use openark_rs::{
 };
 use std::time::Duration;
 mod support;
-use support::{TraceRecorder, start_relay};
+use support::{TraceRecorder, canonical_join_payload, start_relay};
 
 const ROUND_ID: &str = "r-2026-02-24-003";
 const USERS: [&str; 5] = ["Alice", "Bob", "Carol", "Dave", "Eve"];
@@ -91,10 +91,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         }
         let round_ref = round_ref.as_ref().expect("round ref should be present");
 
-        let join_payload = format!(
-            "round_id={ROUND_ID};onboard=VTXO_ROOT;transition=VTXO_ROOT_SIGNATURE_{name};actor={name}",
-            name = named.name
-        );
+        let join_payload = canonical_join_payload(named.name);
         named
             .user
             .send_new_round_join(round_ref, &join_payload)
