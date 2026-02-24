@@ -5,9 +5,8 @@ use super::matchers::{
     event_has_event_reference, event_has_message_type, event_has_message_version, event_has_round_id,
 };
 use super::message::{
-    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, ROUND_MESSAGE_VERSION, new_round_initiate_payload_json,
-    new_round_initiate_tags, openark_round_kind, parse_new_round_initiate_payload, round_tags,
-    round_tags_with_event_ref,
+    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, ROUND_MESSAGE_VERSION, new_round_initiate_event_builder,
+    new_round_join_event_builder, openark_round_kind, parse_new_round_initiate_payload, round_tags,
 };
 
 pub async fn send_new_round_initiate_message(
@@ -15,8 +14,7 @@ pub async fn send_new_round_initiate_message(
     closing_block: u64,
     recycled_block: u64,
 ) -> Result<()> {
-    let payload = new_round_initiate_payload_json(closing_block, recycled_block);
-    let event = EventBuilder::new(openark_round_kind(), payload).tags(new_round_initiate_tags());
+    let event = new_round_initiate_event_builder(closing_block, recycled_block);
     client.send_event_builder(event).await?;
     Ok(())
 }
@@ -38,8 +36,7 @@ pub async fn send_new_round_join_message(
     initiate_event_id: &EventId,
     payload: &str,
 ) -> Result<()> {
-    let event = EventBuilder::new(openark_round_kind(), payload.to_string())
-        .tags(round_tags_with_event_ref(NEW_ROUND_JOIN, initiate_event_id));
+    let event = new_round_join_event_builder(initiate_event_id, payload);
     client.send_event_builder(event).await?;
     Ok(())
 }

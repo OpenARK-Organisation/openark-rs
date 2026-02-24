@@ -21,5 +21,7 @@ pub use message::{
     NEW_ROUND_VTXO_TREE_PROPOSAL,
     OPENARK_KIND_150,
     ROUND_MESSAGE_VERSION,
+    new_round_initiate_event_builder,
+    new_round_join_event_builder,
     parse_new_round_initiate_payload,
 };

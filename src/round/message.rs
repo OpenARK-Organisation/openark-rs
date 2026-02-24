@@ -32,6 +32,14 @@ pub fn new_round_initiate_payload_json(closing_block: u64, recycled_block: u64) 
     format!(r#"{{"closing_block":{closing_block},"recycled_block":{recycled_block}}}"#)
 }
 
+pub fn new_round_initiate_event_builder(closing_block: u64, recycled_block: u64) -> EventBuilder {
+    EventBuilder::new(
+        openark_round_kind(),
+        new_round_initiate_payload_json(closing_block, recycled_block),
+    )
+    .tags(new_round_initiate_tags())
+}
+
 pub fn parse_new_round_initiate_payload(content: &str) -> Option<NewRoundInitiatePayload> {
     let value: Value = serde_json::from_str(content).ok()?;
     Some(NewRoundInitiatePayload {
@@ -52,4 +60,9 @@ pub fn round_tags_with_event_ref(message_type: &str, event_id: &EventId) -> Vec<
         Tag::hashtag(message_type),
         Tag::custom(TagKind::custom("e"), [event_id.to_string()]),
     ]
+}
+
+pub fn new_round_join_event_builder(initiate_event_id: &EventId, payload: &str) -> EventBuilder {
+    EventBuilder::new(openark_round_kind(), payload.to_string())
+        .tags(round_tags_with_event_ref(NEW_ROUND_JOIN, initiate_event_id))
 }

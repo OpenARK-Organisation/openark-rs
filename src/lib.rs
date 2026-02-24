@@ -18,6 +18,8 @@ pub use round::{
     event_has_message_version,
     event_has_round_id,
     event_is_openark_kind_150,
+    new_round_initiate_event_builder,
+    new_round_join_event_builder,
     event_round_id,
     parse_new_round_initiate_payload,
 };
