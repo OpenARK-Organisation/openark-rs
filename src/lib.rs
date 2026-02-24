@@ -8,6 +8,11 @@ pub const USER_REPLY_MESSAGE: &str = "how are you today";
 pub const OPENARK_KIND_150: u16 = 150;
 pub const NEW_ROUND_INITIATE: &str = "new_round_initiate";
 pub const NEW_ROUND_JOIN: &str = "new_round_join";
+pub const NEW_ROUND_VTXO_TREE_PROPOSAL: &str = "new_round_vtxo_tree_proposal";
+pub const NEW_ROUND_VTXO_TREE_ACCEPT: &str = "new_round_vtxo_tree_accept";
+pub const NEW_ROUND_PREPARE_START: &str = "new_round_prepare_start";
+pub const NEW_ROUND_START_PREPARED: &str = "new_round_start_prepared";
+pub const NEW_ROUND_START: &str = "new_round_start";
 
 pub struct OpenArkServiceProvider {
     client: Client,
@@ -76,6 +81,60 @@ impl OpenArkServiceProvider {
         )
         .await
     }
+
+    pub async fn send_new_round_vtxo_tree_proposal(
+        &self,
+        round_id: &str,
+        payload: &str,
+    ) -> Result<()> {
+        send_round_message(
+            &self.client,
+            NEW_ROUND_VTXO_TREE_PROPOSAL,
+            round_id,
+            payload,
+        )
+        .await
+    }
+
+    pub async fn wait_for_new_round_vtxo_tree_accept_event(
+        &self,
+        user_pubkey: PublicKey,
+        round_id: &str,
+        timeout: Duration,
+    ) -> Result<Option<Event>> {
+        wait_for_round_message(
+            &self.client,
+            user_pubkey,
+            NEW_ROUND_VTXO_TREE_ACCEPT,
+            round_id,
+            timeout,
+        )
+        .await
+    }
+
+    pub async fn send_new_round_prepare_start(&self, round_id: &str, payload: &str) -> Result<()> {
+        send_round_message(&self.client, NEW_ROUND_PREPARE_START, round_id, payload).await
+    }
+
+    pub async fn wait_for_new_round_start_prepared_event(
+        &self,
+        user_pubkey: PublicKey,
+        round_id: &str,
+        timeout: Duration,
+    ) -> Result<Option<Event>> {
+        wait_for_round_message(
+            &self.client,
+            user_pubkey,
+            NEW_ROUND_START_PREPARED,
+            round_id,
+            timeout,
+        )
+        .await
+    }
+
+    pub async fn send_new_round_start(&self, round_id: &str, payload: &str) -> Result<()> {
+        send_round_message(&self.client, NEW_ROUND_START, round_id, payload).await
+    }
 }
 
 pub struct OpenArkUser {
@@ -143,6 +202,74 @@ impl OpenArkUser {
 
     pub async fn send_new_round_join(&self, round_id: &str, payload: &str) -> Result<()> {
         send_round_message(&self.client, NEW_ROUND_JOIN, round_id, payload).await
+    }
+
+    pub async fn wait_for_new_round_vtxo_tree_proposal_event(
+        &self,
+        provider_pubkey: PublicKey,
+        round_id: &str,
+        timeout: Duration,
+    ) -> Result<Option<Event>> {
+        wait_for_round_message(
+            &self.client,
+            provider_pubkey,
+            NEW_ROUND_VTXO_TREE_PROPOSAL,
+            round_id,
+            timeout,
+        )
+        .await
+    }
+
+    pub async fn send_new_round_vtxo_tree_accept(&self, round_id: &str, payload: &str) -> Result<()> {
+        send_round_message(
+            &self.client,
+            NEW_ROUND_VTXO_TREE_ACCEPT,
+            round_id,
+            payload,
+        )
+        .await
+    }
+
+    pub async fn wait_for_new_round_prepare_start_event(
+        &self,
+        provider_pubkey: PublicKey,
+        round_id: &str,
+        timeout: Duration,
+    ) -> Result<Option<Event>> {
+        wait_for_round_message(
+            &self.client,
+            provider_pubkey,
+            NEW_ROUND_PREPARE_START,
+            round_id,
+            timeout,
+        )
+        .await
+    }
+
+    pub async fn send_new_round_start_prepared(&self, round_id: &str, payload: &str) -> Result<()> {
+        send_round_message(
+            &self.client,
+            NEW_ROUND_START_PREPARED,
+            round_id,
+            payload,
+        )
+        .await
+    }
+
+    pub async fn wait_for_new_round_start_event(
+        &self,
+        provider_pubkey: PublicKey,
+        round_id: &str,
+        timeout: Duration,
+    ) -> Result<Option<Event>> {
+        wait_for_round_message(
+            &self.client,
+            provider_pubkey,
+            NEW_ROUND_START,
+            round_id,
+            timeout,
+        )
+        .await
     }
 }
 
