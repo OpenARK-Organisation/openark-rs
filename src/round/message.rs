@@ -149,9 +149,16 @@ pub fn round_tags_with_event_ref(message_type: &str, event_id: &EventId) -> Vec<
     ]
 }
 
+pub fn new_round_join_tags(initiate_event_id: &EventId) -> Vec<Tag> {
+    vec![
+        Tag::hashtag(NEW_ROUND_JOIN),
+        Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
+        Tag::custom(TagKind::custom("e"), [initiate_event_id.to_string()]),
+    ]
+}
+
 pub fn new_round_join_event_builder(initiate_event_id: &EventId, payload: &str) -> EventBuilder {
-    EventBuilder::new(openark_round_kind(), payload.to_string())
-        .tags(round_tags_with_event_ref(NEW_ROUND_JOIN, initiate_event_id))
+    EventBuilder::new(openark_round_kind(), payload.to_string()).tags(new_round_join_tags(initiate_event_id))
 }
 
 #[cfg(test)]
