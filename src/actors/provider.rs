@@ -1,12 +1,14 @@
 use nostr_sdk::prelude::*;
+use std::sync::Mutex;
 use std::time::Duration;
+use bdk_wallet::{KeychainKind, Wallet};
 
 use crate::round::message::{
-    NEW_ROUND_START, NewRoundVtxoTreeProposalPayload,
+    NewRoundStartPayload, NewRoundVtxoTreeProposalPayload,
 };
 use crate::round::transport::{
     send_new_round_initiate_message, send_new_round_prepare_start_message,
-    send_new_round_vtxo_tree_proposal_message, send_round_message, wait_for_new_round_join_message,
+    send_new_round_start_message, send_new_round_vtxo_tree_proposal_message, wait_for_new_round_join_message,
     wait_for_new_round_start_prepared_message, wait_for_new_round_vtxo_tree_accept_message,
 };
 use crate::{PROVIDER_MESSAGE, USER_REPLY_MESSAGE};
@@ -14,6 +16,8 @@ use crate::{PROVIDER_MESSAGE, USER_REPLY_MESSAGE};
 pub struct OpenArkServiceProvider {
     client: Client,
     pub pubkey: PublicKey,
+    wallet: Mutex<Wallet>,
+    seed_phrase: String,
 }
 
 impl OpenArkServiceProvider {
@@ -23,7 +27,28 @@ impl OpenArkServiceProvider {
         let client = Client::builder().signer(keys).build();
         client.add_relay(relay_url).await?;
         client.connect().await;
-        Ok(Self { client, pubkey })
+        let (wallet, seed_phrase) = crate::create_regtest_bdk_wallet_with_new_seed_phrase();
+        Ok(Self {
+            client,
+            pubkey,
+            wallet: Mutex::new(wallet),
+            seed_phrase,
+        })
+    }
+
+    pub fn wallet_seed_phrase(&self) -> &str {
+        &self.seed_phrase
+    }
+
+    pub fn wallet_receive_address(&self) -> String {
+        let mut wallet = self
+            .wallet
+            .lock()
+            .expect("wallet mutex should not be poisoned");
+        wallet
+            .reveal_next_address(KeychainKind::External)
+            .address
+            .to_string()
     }
 
     pub async fn send_hello(&self) -> Result<()> {
@@ -125,7 +150,11 @@ impl OpenArkServiceProvider {
         ).await
     }
 
-    pub async fn send_new_round_start(&self, round_id: &str, payload: &str) -> Result<()> {
-        send_round_message(&self.client, NEW_ROUND_START, round_id, payload).await
+    pub async fn send_new_round_start(
+        &self,
+        initiate_event_id: &EventId,
+        payload: &NewRoundStartPayload,
+    ) -> Result<()> {
+        send_new_round_start_message(&self.client, initiate_event_id, payload).await
     }
 }

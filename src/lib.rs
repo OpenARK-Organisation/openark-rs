@@ -57,7 +57,11 @@ pub use round::{
     validate_new_round_vtxo_tree_accept_event,
     validate_new_round_vtxo_tree_proposal_event,
 };
-pub use wallet::create_regtest_bdk_wallet;
+pub use wallet::{
+    create_regtest_bdk_wallet,
+    create_regtest_bdk_wallet_from_seed_phrase,
+    create_regtest_bdk_wallet_with_new_seed_phrase,
+};
 pub use tx_debug::{format_tx_report, print_tx_report};
 
 pub const PROVIDER_MESSAGE: &str = "hello";

@@ -2,22 +2,23 @@ use nostr_sdk::prelude::Event;
 use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START,
     NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
-    OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_event_reference,
+    NewRoundStartPayload, OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_event_reference,
     event_has_message_type, event_has_event_reference, event_has_message_version,
-    event_has_round_id, event_is_openark_kind_150,
-    parse_new_round_initiate_payload, parse_new_round_join_payload,
+    event_is_openark_kind_150,
+    parse_new_round_initiate_payload, parse_new_round_join_payload, parse_new_round_start_payload,
     parse_new_round_start_prepared_payload,
     parse_new_round_vtxo_tree_accept_payload, parse_new_round_vtxo_tree_proposal_payload,
     validate_new_round_initiate_event, validate_new_round_join_event_reference,
-    validate_new_round_prepare_start_event, validate_new_round_start_prepared_event,
+    validate_new_round_prepare_start_event, validate_new_round_start_event, validate_new_round_start_prepared_event,
     validate_new_round_vtxo_tree_accept_event, validate_new_round_vtxo_tree_proposal_event,
 };
 use std::time::Duration;
 mod support;
 use support::{
-    PREPARE_FUNDING_OUTPOINT_0, PROPOSAL_VTXO_OUTPOINT_0, TraceRecorder, expected_onchain_outpoint,
+    PREPARE_FUNDING_OUTPOINT_0, PROPOSAL_VTXO_OUTPOINT_0, TraceRecorder,
     canonical_join_payload, canonical_start_prepared_payload,
-    canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, start_relay,
+    canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, fund_wallets_two_btc,
+    prepare_onboard_utxos_one_btc, start_relay,
 };
 
 const ROUND_ID: &str = "r-2026-02-24-002";
@@ -42,8 +43,9 @@ fn assert_round_event(event: &Event, message_type: &str, round_ref: Option<&nost
     } else if message_type == NEW_ROUND_PREPARE_START || message_type == NEW_ROUND_START_PREPARED {
         let round_ref = round_ref.expect("round ref should be set");
         assert!(event_has_event_reference(event, round_ref));
-    } else {
-        assert!(event_has_round_id(event, ROUND_ID));
+    } else if message_type == NEW_ROUND_START {
+        let round_ref = round_ref.expect("round ref should be set");
+        assert!(validate_new_round_start_event(event, round_ref).is_ok());
     }
 }
 
@@ -63,6 +65,26 @@ async fn step2_two_actor_kind150_full_phase_flow() {
         .await
         .expect("user should connect");
     println!("[Alice] connected with pubkey={}", user.pubkey);
+    fund_wallets_two_btc(&[
+        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
+        ("Alice", user.wallet_receive_address(), user.wallet_seed_phrase().to_string()),
+    ]).await;
+    let prepared_onboard = prepare_onboard_utxos_one_btc(
+        &mut trace,
+        &[(
+            "Alice",
+            user.wallet_receive_address(),
+            user.wallet_seed_phrase().to_string(),
+        )],
+    )
+    .await;
+    let alice_onboard = prepared_onboard
+        .get("Alice")
+        .expect("Alice onboard utxo should be prepared");
+    assert_eq!(
+        alice_onboard.amount_sats, 100_000_000,
+        "Alice prepared onboard utxo must be exactly 1 BTC"
+    );
 
     tokio::time::sleep(Duration::from_secs(1)).await;
     println!("[test] clients settled, executing phase sequence");
@@ -88,7 +110,7 @@ async fn step2_two_actor_kind150_full_phase_flow() {
     println!("[round] reference={round_ref}");
     observed_order.push(NEW_ROUND_INITIATE);
 
-    let join_payload = canonical_join_payload("Alice");
+    let join_payload = canonical_join_payload("Alice", alice_onboard.outpoint.clone());
     user.send_new_round_join(&round_ref, &join_payload)
         .await
         .expect("user should send join");
@@ -108,7 +130,11 @@ async fn step2_two_actor_kind150_full_phase_flow() {
     let join_payload = parse_new_round_join_payload(&join.content)
         .expect("join content should parse as canonical JSON payload");
     assert_eq!(join_payload.onboard.len(), 1);
-    assert_eq!(join_payload.onboard[0].outpoint, expected_onchain_outpoint("Alice"));
+    assert_eq!(
+        join_payload.onboard[0].outpoint,
+        alice_onboard.outpoint,
+        "join payload onboard outpoint must match prepared Alice onboard utxo"
+    );
     assert_eq!(join_payload.offboard.len(), 0);
     assert_eq!(join_payload.keys.user_pubkey, "Alice-user-pubkey");
     assert_eq!(join_payload.keys.agent_pubkey, "Alice-agent-pubkey");
@@ -237,21 +263,25 @@ async fn step2_two_actor_kind150_full_phase_flow() {
     trace.note("round_activation", "provider publishing round_start");
     provider
         .send_new_round_start(
-            ROUND_ID,
-            "round_id=r-2026-02-24-002;round_txid=VTXO_ROOT;status=activated;actor=Steve",
+            &round_ref,
+            &NewRoundStartPayload {
+                round_tx: "BASE64_SIGNED_ROOT_TX_002".to_string(),
+            },
         )
         .await
         .expect("provider should send round_start");
     println!("[Steve] published {NEW_ROUND_START}");
 
     let start = user
-        .wait_for_new_round_start_event(provider.pubkey, ROUND_ID, Duration::from_secs(10))
+        .wait_for_new_round_start_event(provider.pubkey, &round_ref, Duration::from_secs(10))
         .await
         .expect("user should wait for round_start")
         .expect("user should receive round_start");
     trace.event("Alice", "received round_start", &start);
     assert_round_event(&start, NEW_ROUND_START, Some(&round_ref));
-    assert!(start.content.contains("VTXO_ROOT"));
+    let parsed_start = parse_new_round_start_payload(&start.content)
+        .expect("start payload should parse");
+    assert_eq!(parsed_start.round_tx, "BASE64_SIGNED_ROOT_TX_002");
     observed_order.push(NEW_ROUND_START);
 
     let expected_order = vec![
@@ -265,7 +295,7 @@ async fn step2_two_actor_kind150_full_phase_flow() {
     ];
     assert_eq!(observed_order, expected_order);
 
-    println!("[test] final state: round activated with round_txid=VTXO_ROOT");
+    println!("[test] final state: round activated with round_tx=BASE64_SIGNED_ROOT_TX_002");
     println!("[test] step2_two_actor_kind150_full_phase_flow passed");
     trace.finish(
         "passed",

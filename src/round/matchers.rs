@@ -2,10 +2,10 @@ use nostr_sdk::prelude::*;
 use serde_json::Value;
 
 use super::message::{
-    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START_PREPARED,
+    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START, NEW_ROUND_START_PREPARED,
     NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL, ROUND_MESSAGE_VERSION,
     openark_round_kind,
-    parse_new_round_initiate_payload, parse_new_round_join_payload,
+    parse_new_round_initiate_payload, parse_new_round_join_payload, parse_new_round_start_payload,
     parse_new_round_start_prepared_payload,
     parse_new_round_vtxo_tree_accept_payload, parse_new_round_vtxo_tree_proposal_payload,
 };
@@ -211,6 +211,28 @@ pub fn validate_new_round_start_prepared_event(
     }
     if parse_new_round_start_prepared_payload(&event.content).is_none() {
         return Err("invalid_start_prepared_payload");
+    }
+    Ok(())
+}
+
+pub fn validate_new_round_start_event(
+    event: &Event,
+    expected_initiate_event_id: &EventId,
+) -> Result<(), &'static str> {
+    if !event_is_openark_kind_150(event) {
+        return Err("wrong_kind");
+    }
+    if !event_has_message_type(event, NEW_ROUND_START) {
+        return Err("missing_or_wrong_t");
+    }
+    if !event_has_message_version(event, ROUND_MESSAGE_VERSION) {
+        return Err("missing_or_wrong_v");
+    }
+    if !event_has_event_reference(event, expected_initiate_event_id) {
+        return Err("missing_or_wrong_e");
+    }
+    if parse_new_round_start_payload(&event.content).is_none() {
+        return Err("invalid_start_payload");
     }
     Ok(())
 }

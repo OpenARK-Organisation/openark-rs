@@ -11,8 +11,9 @@ use openark_rs::{
 use std::time::Duration;
 mod support;
 use support::{
-    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload, expected_onchain_outpoint,
-    canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, start_relay,
+    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload,
+    canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, fund_wallets_two_btc,
+    prepare_onboard_utxos_one_btc, start_relay,
 };
 
 fn assert_round_event(
@@ -84,6 +85,27 @@ async fn failure_missing_new_round_join_blocks_phase() {
     let alice = OpenArkUser::connect(&relay_url).await.expect("alice connect");
     let bob = OpenArkUser::connect(&relay_url).await.expect("bob connect");
     let carol = OpenArkUser::connect(&relay_url).await.expect("carol connect");
+    fund_wallets_two_btc(&[
+        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
+        ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
+        ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+        ("Carol", carol.wallet_receive_address(), carol.wallet_seed_phrase().to_string()),
+    ]).await;
+    let prepared_onboard = prepare_onboard_utxos_one_btc(
+        &mut trace,
+        &[
+            ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
+            ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+            ("Carol", carol.wallet_receive_address(), carol.wallet_seed_phrase().to_string()),
+        ],
+    )
+    .await;
+    for name in ["Alice", "Bob", "Carol"] {
+        let prepared = prepared_onboard
+            .get(name)
+            .expect("prepared onboard utxo should exist");
+        assert_eq!(prepared.amount_sats, 100_000_000);
+    }
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -94,7 +116,7 @@ async fn failure_missing_new_round_join_blocks_phase() {
     println!("[Steve] published {NEW_ROUND_INITIATE}");
 
     let mut round_ref: Option<nostr_sdk::prelude::EventId> = None;
-    for (name, user) in [(&"Alice", &alice), (&"Bob", &bob), (&"Carol", &carol)] {
+    for (name, user) in [("Alice", &alice), ("Bob", &bob), ("Carol", &carol)] {
         let initiate = user
             .wait_for_new_round_initiate_event(provider.pubkey, Duration::from_secs(10))
             .await
@@ -109,8 +131,16 @@ async fn failure_missing_new_round_join_blocks_phase() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
-    let alice_join_payload = canonical_join_payload("Alice");
-    let bob_join_payload = canonical_join_payload("Bob");
+    let alice_join_payload = canonical_join_payload("Alice", prepared_onboard
+        .get("Alice")
+        .expect("Alice onboard utxo should exist")
+        .outpoint
+        .clone());
+    let bob_join_payload = canonical_join_payload("Bob", prepared_onboard
+        .get("Bob")
+        .expect("Bob onboard utxo should exist")
+        .outpoint
+        .clone());
 
     alice
         .send_new_round_join(&round_ref, &alice_join_payload)
@@ -122,7 +152,7 @@ async fn failure_missing_new_round_join_blocks_phase() {
     println!("[Alice/Bob] published {NEW_ROUND_JOIN}; [Carol] intentionally silent");
 
     let mut joins = 0usize;
-    for (name, pubkey) in [(&"Alice", alice.pubkey), (&"Bob", bob.pubkey)] {
+    for (name, pubkey) in [("Alice", alice.pubkey), ("Bob", bob.pubkey)] {
         let join = provider
             .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
@@ -133,9 +163,13 @@ async fn failure_missing_new_round_join_blocks_phase() {
         let join_payload = parse_new_round_join_payload(&join.content)
             .expect("join payload should parse");
         assert_eq!(join_payload.onboard.len(), 1);
+        let prepared = prepared_onboard
+            .get(name)
+            .expect("prepared onboard utxo should exist for join sender");
+        assert_eq!(prepared.amount_sats, 100_000_000);
         assert_eq!(
             join_payload.onboard[0].outpoint,
-            expected_onchain_outpoint(name)
+            prepared.outpoint
         );
         assert_eq!(join_payload.offboard.len(), 0);
         joins += 1;
@@ -168,6 +202,25 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         .expect("provider should connect");
     let alice = OpenArkUser::connect(&relay_url).await.expect("alice connect");
     let bob = OpenArkUser::connect(&relay_url).await.expect("bob connect");
+    fund_wallets_two_btc(&[
+        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
+        ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
+        ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+    ]).await;
+    let prepared_onboard = prepare_onboard_utxos_one_btc(
+        &mut trace,
+        &[
+            ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
+            ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+        ],
+    )
+    .await;
+    for name in ["Alice", "Bob"] {
+        let prepared = prepared_onboard
+            .get(name)
+            .expect("prepared onboard utxo should exist");
+        assert_eq!(prepared.amount_sats, 100_000_000);
+    }
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -190,8 +243,16 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
-    let alice_join_payload = canonical_join_payload("Alice");
-    let bob_join_payload = canonical_join_payload("Bob");
+    let alice_join_payload = canonical_join_payload("Alice", prepared_onboard
+        .get("Alice")
+        .expect("Alice onboard utxo should exist")
+        .outpoint
+        .clone());
+    let bob_join_payload = canonical_join_payload("Bob", prepared_onboard
+        .get("Bob")
+        .expect("Bob onboard utxo should exist")
+        .outpoint
+        .clone());
 
     alice
         .send_new_round_join(&round_ref, &alice_join_payload)
@@ -201,16 +262,20 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         .await
         .expect("bob join");
 
-    for pubkey in [alice.pubkey, bob.pubkey] {
+    for (name, pubkey) in [("Alice", alice.pubkey), ("Bob", bob.pubkey)] {
         let join = provider
             .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
             .expect("provider wait join")
             .expect("provider receive join");
-        assert!(
-            parse_new_round_join_payload(&join.content).is_some(),
-            "join payload should parse"
-        );
+        let parsed = parse_new_round_join_payload(&join.content)
+            .expect("join payload should parse");
+        assert_eq!(parsed.onboard.len(), 1);
+        let prepared = prepared_onboard
+            .get(name)
+            .expect("prepared onboard utxo should exist for join sender");
+        assert_eq!(prepared.amount_sats, 100_000_000);
+        assert_eq!(parsed.onboard[0].outpoint, prepared.outpoint);
     }
 
     let proposal_payload = canonical_vtxo_tree_proposal_payload();
@@ -319,6 +384,25 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
         .expect("provider should connect");
     let alice = OpenArkUser::connect(&relay_url).await.expect("alice connect");
     let bob = OpenArkUser::connect(&relay_url).await.expect("bob connect");
+    fund_wallets_two_btc(&[
+        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
+        ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
+        ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+    ]).await;
+    let prepared_onboard = prepare_onboard_utxos_one_btc(
+        &mut trace,
+        &[
+            ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
+            ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+        ],
+    )
+    .await;
+    for name in ["Alice", "Bob"] {
+        let prepared = prepared_onboard
+            .get(name)
+            .expect("prepared onboard utxo should exist");
+        assert_eq!(prepared.amount_sats, 100_000_000);
+    }
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -341,8 +425,16 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
-    let alice_join_payload = canonical_join_payload("Alice");
-    let bob_join_payload = canonical_join_payload("Bob");
+    let alice_join_payload = canonical_join_payload("Alice", prepared_onboard
+        .get("Alice")
+        .expect("Alice onboard utxo should exist")
+        .outpoint
+        .clone());
+    let bob_join_payload = canonical_join_payload("Bob", prepared_onboard
+        .get("Bob")
+        .expect("Bob onboard utxo should exist")
+        .outpoint
+        .clone());
 
     alice
         .send_new_round_join(&round_ref, &alice_join_payload)
@@ -351,16 +443,20 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
     bob.send_new_round_join(&round_ref, &bob_join_payload)
         .await
         .expect("bob join");
-    for pubkey in [alice.pubkey, bob.pubkey] {
+    for (name, pubkey) in [("Alice", alice.pubkey), ("Bob", bob.pubkey)] {
         let join = provider
             .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
             .expect("provider wait join")
             .expect("provider receive join");
-        assert!(
-            parse_new_round_join_payload(&join.content).is_some(),
-            "join payload should parse"
-        );
+        let parsed = parse_new_round_join_payload(&join.content)
+            .expect("join payload should parse");
+        assert_eq!(parsed.onboard.len(), 1);
+        let prepared = prepared_onboard
+            .get(name)
+            .expect("prepared onboard utxo should exist for join sender");
+        assert_eq!(prepared.amount_sats, 100_000_000);
+        assert_eq!(parsed.onboard[0].outpoint, prepared.outpoint);
     }
 
     let proposal_payload = canonical_vtxo_tree_proposal_payload();
@@ -506,6 +602,25 @@ async fn failure_late_start_prepared_blocks_activation() {
         .expect("provider should connect");
     let alice = OpenArkUser::connect(&relay_url).await.expect("alice connect");
     let bob = OpenArkUser::connect(&relay_url).await.expect("bob connect");
+    fund_wallets_two_btc(&[
+        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
+        ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
+        ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+    ]).await;
+    let prepared_onboard = prepare_onboard_utxos_one_btc(
+        &mut trace,
+        &[
+            ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
+            ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+        ],
+    )
+    .await;
+    for name in ["Alice", "Bob"] {
+        let prepared = prepared_onboard
+            .get(name)
+            .expect("prepared onboard utxo should exist");
+        assert_eq!(prepared.amount_sats, 100_000_000);
+    }
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -528,8 +643,16 @@ async fn failure_late_start_prepared_blocks_activation() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
-    let alice_join_payload = canonical_join_payload("Alice");
-    let bob_join_payload = canonical_join_payload("Bob");
+    let alice_join_payload = canonical_join_payload("Alice", prepared_onboard
+        .get("Alice")
+        .expect("Alice onboard utxo should exist")
+        .outpoint
+        .clone());
+    let bob_join_payload = canonical_join_payload("Bob", prepared_onboard
+        .get("Bob")
+        .expect("Bob onboard utxo should exist")
+        .outpoint
+        .clone());
 
     alice
         .send_new_round_join(&round_ref, &alice_join_payload)
@@ -538,16 +661,20 @@ async fn failure_late_start_prepared_blocks_activation() {
     bob.send_new_round_join(&round_ref, &bob_join_payload)
         .await
         .expect("bob join");
-    for pubkey in [alice.pubkey, bob.pubkey] {
+    for (name, pubkey) in [("Alice", alice.pubkey), ("Bob", bob.pubkey)] {
         let join = provider
             .wait_for_new_round_join_event(pubkey, &round_ref, Duration::from_secs(5))
             .await
             .expect("wait join")
             .expect("receive join");
-        assert!(
-            parse_new_round_join_payload(&join.content).is_some(),
-            "join payload should parse"
-        );
+        let parsed = parse_new_round_join_payload(&join.content)
+            .expect("join payload should parse");
+        assert_eq!(parsed.onboard.len(), 1);
+        let prepared = prepared_onboard
+            .get(name)
+            .expect("prepared onboard utxo should exist for join sender");
+        assert_eq!(prepared.amount_sats, 100_000_000);
+        assert_eq!(parsed.onboard[0].outpoint, prepared.outpoint);
     }
 
     let proposal_payload = canonical_vtxo_tree_proposal_payload();

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 bdk_wallet = "2.3.0"
+bip39 = { version = "2", features = ["rand"] }
 nostr-sdk = { git = "https://github.com/dukeh3/nostr" }
 serde_json = "1"
 tokio = { version = "1", features = ["time"] }
@@ -13,3 +14,43 @@ tokio = { version = "1", features = ["time"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 testcontainers = "0.27"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+[[test]]
+name = "psbt_taproot_ab_output"
+path = "tests/psbt/psbt_taproot_ab_output.rs"
+
+[[test]]
+name = "psbt_taproot_ab_output_rust_signers"
+path = "tests/psbt/psbt_taproot_ab_output_rust_signers.rs"
+
+[[test]]
+name = "psbt_taproot_a_timeout_output_rust_signers"
+path = "tests/psbt/psbt_taproot_a_timeout_output_rust_signers.rs"
+
+[[test]]
+name = "psbt_taproot_ab_or_b_after_t_rust_signers"
+path = "tests/psbt/psbt_taproot_ab_or_b_after_t_rust_signers.rs"
+
+[[test]]
+name = "round_step1_nostr_kind150"
+path = "tests/scenario/example_1.0.0/round_step1_nostr_kind150.rs"
+
+[[test]]
+name = "round_step2_two_actor_full_flow"
+path = "tests/scenario/example_1.0.0/round_step2_two_actor_full_flow.rs"
+
+[[test]]
+name = "round_step3_multi_actor_full_flow"
+path = "tests/scenario/example_1.0.0/round_step3_multi_actor_full_flow.rs"
+
+[[test]]
+name = "round_step4_failure_paths"
+path = "tests/scenario/example_1.0.0/round_step4_failure_paths.rs"
+
+[[test]]
+name = "round_step5_phase1_negative_validation"
+path = "tests/scenario/example_1.0.0/round_step5_phase1_negative_validation.rs"
+
+[[test]]
+name = "round_step6_phase5_negative_validation"
+path = "tests/scenario/example_1.0.0/round_step6_phase5_negative_validation.rs"

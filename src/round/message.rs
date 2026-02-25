@@ -72,6 +72,11 @@ pub struct NewRoundStartPreparedPayload {
     pub recycle_signature: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewRoundStartPayload {
+    pub round_tx: String,
+}
+
 pub fn new_round_join_payload_json(payload: &NewRoundJoinPayload) -> String {
     let onboard: Vec<Value> = payload
         .onboard
@@ -259,6 +264,24 @@ pub fn parse_new_round_start_prepared_payload(content: &str) -> Option<NewRoundS
     })
 }
 
+pub fn new_round_start_payload_json(payload: &NewRoundStartPayload) -> String {
+    serde_json::json!({
+        "round_tx": payload.round_tx
+    })
+    .to_string()
+}
+
+pub fn parse_new_round_start_payload(content: &str) -> Option<NewRoundStartPayload> {
+    let value: Value = serde_json::from_str(content).ok()?;
+    let object = value.as_object()?;
+    if object.len() != 1 || !object.contains_key("round_tx") {
+        return None;
+    }
+    Some(NewRoundStartPayload {
+        round_tx: value.get("round_tx")?.as_str()?.to_string(),
+    })
+}
+
 pub fn new_round_initiate_tags() -> Vec<Tag> {
     vec![
         Tag::hashtag(NEW_ROUND_INITIATE),
@@ -439,6 +462,22 @@ pub fn new_round_start_prepared_event_builder(
         initiate_event_id,
         prepare_start_event_id,
     ))
+}
+
+pub fn new_round_start_tags(initiate_event_id: &EventId) -> Vec<Tag> {
+    vec![
+        Tag::hashtag(NEW_ROUND_START),
+        Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
+        Tag::custom(TagKind::custom("e"), [initiate_event_id.to_string()]),
+    ]
+}
+
+pub fn new_round_start_event_builder(
+    initiate_event_id: &EventId,
+    payload: &NewRoundStartPayload,
+) -> EventBuilder {
+    EventBuilder::new(openark_round_kind(), new_round_start_payload_json(payload))
+        .tags(new_round_start_tags(initiate_event_id))
 }
 
 #[cfg(test)]

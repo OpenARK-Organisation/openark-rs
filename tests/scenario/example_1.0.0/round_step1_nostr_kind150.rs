@@ -7,7 +7,10 @@ use openark_rs::{
 };
 use std::time::Duration;
 mod support;
-use support::{TraceRecorder, canonical_join_payload, expected_onchain_outpoint, start_relay};
+use support::{
+    TraceRecorder, canonical_join_payload, fund_wallets_two_btc, prepare_onboard_utxos_one_btc,
+    start_relay,
+};
 
 const ROUND_ID: &str = "r-2026-02-24-001";
 
@@ -26,6 +29,23 @@ async fn step1_two_actor_kind150_round_handshake() {
         .await
         .expect("user should connect");
     println!("[Alice] connected with pubkey={}", user.pubkey);
+    fund_wallets_two_btc(&[
+        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
+        ("Alice", user.wallet_receive_address(), user.wallet_seed_phrase().to_string()),
+    ]).await;
+    let prepared_onboard = prepare_onboard_utxos_one_btc(
+        &mut trace,
+        &[(
+            "Alice",
+            user.wallet_receive_address(),
+            user.wallet_seed_phrase().to_string(),
+        )],
+    )
+    .await;
+    let alice_onboard = prepared_onboard
+        .get("Alice")
+        .expect("Alice onboard utxo should be prepared");
+    assert_eq!(alice_onboard.amount_sats, 100_000_000);
 
     tokio::time::sleep(Duration::from_secs(1)).await;
     println!("[test] clients settled, starting handshake flow");
@@ -59,7 +79,7 @@ async fn step1_two_actor_kind150_round_handshake() {
     println!("[round] reference={round_ref}");
 
     println!("[Alice] publishing {NEW_ROUND_JOIN} round_id={ROUND_ID}");
-    let join_payload = canonical_join_payload("Alice");
+    let join_payload = canonical_join_payload("Alice", alice_onboard.outpoint.clone());
     user.send_new_round_join(&round_ref, &join_payload)
         .await
         .expect("user should send new_round_join");
@@ -87,7 +107,7 @@ async fn step1_two_actor_kind150_round_handshake() {
     let join_payload = parse_new_round_join_payload(&join.content)
         .expect("join content should parse as canonical JSON payload");
     assert_eq!(join_payload.onboard.len(), 1);
-    assert_eq!(join_payload.onboard[0].outpoint, expected_onchain_outpoint("Alice"));
+    assert_eq!(join_payload.onboard[0].outpoint, alice_onboard.outpoint);
     assert_eq!(join_payload.offboard.len(), 0);
     assert_eq!(join_payload.keys.user_pubkey, "Alice-user-pubkey");
     assert_eq!(join_payload.keys.agent_pubkey, "Alice-agent-pubkey");

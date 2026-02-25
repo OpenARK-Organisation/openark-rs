@@ -2,20 +2,21 @@ use nostr_sdk::prelude::Event;
 use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START,
     NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
-    OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_event_reference,
+    NewRoundStartPayload, OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_event_reference,
     event_has_message_type, event_has_event_reference, event_has_message_version,
-    event_has_round_id, event_is_openark_kind_150,
-    parse_new_round_initiate_payload, parse_new_round_join_payload,
+    event_is_openark_kind_150,
+    parse_new_round_initiate_payload, parse_new_round_join_payload, parse_new_round_start_payload,
     parse_new_round_start_prepared_payload,
     parse_new_round_vtxo_tree_accept_payload, parse_new_round_vtxo_tree_proposal_payload,
-    validate_new_round_prepare_start_event, validate_new_round_start_prepared_event,
+    validate_new_round_prepare_start_event, validate_new_round_start_event, validate_new_round_start_prepared_event,
     validate_new_round_vtxo_tree_accept_event, validate_new_round_vtxo_tree_proposal_event,
 };
 use std::time::Duration;
 mod support;
 use support::{
-    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload, expected_onchain_outpoint,
-    canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, start_relay,
+    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload,
+    canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, fund_wallets_two_btc,
+    prepare_onboard_utxos_one_btc, start_relay,
 };
 
 const ROUND_ID: &str = "r-2026-02-24-003";
@@ -44,8 +45,9 @@ fn assert_round_event(event: &Event, message_type: &str, round_ref: Option<&nost
     } else if message_type == NEW_ROUND_PREPARE_START || message_type == NEW_ROUND_START_PREPARED {
         let round_ref = round_ref.expect("round ref should be set");
         assert!(event_has_event_reference(event, round_ref));
-    } else {
-        assert!(event_has_round_id(event, ROUND_ID));
+    } else if message_type == NEW_ROUND_START {
+        let round_ref = round_ref.expect("round ref should be set");
+        assert!(validate_new_round_start_event(event, round_ref).is_ok());
     }
 }
 
@@ -68,6 +70,37 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .expect("user should connect");
         println!("[{name}] connected with pubkey={}", user.pubkey);
         users.push(NamedUser { name, user });
+    }
+    let mut wallets = vec![
+        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
+    ];
+    for named in &users {
+        wallets.push((
+            named.name,
+            named.user.wallet_receive_address(),
+            named.user.wallet_seed_phrase().to_string(),
+        ));
+    }
+    fund_wallets_two_btc(&wallets).await;
+    let onboard_wallets: Vec<(&str, String, String)> = users
+        .iter()
+        .map(|named| {
+            (
+                named.name,
+                named.user.wallet_receive_address(),
+                named.user.wallet_seed_phrase().to_string(),
+            )
+        })
+        .collect();
+    let prepared_onboard = prepare_onboard_utxos_one_btc(&mut trace, &onboard_wallets).await;
+    for named in &users {
+        let prepared = prepared_onboard
+            .get(named.name)
+            .expect("prepared onboard utxo should exist for each user");
+        assert_eq!(
+            prepared.amount_sats, 100_000_000,
+            "prepared onboard amount should be exactly 1 BTC"
+        );
     }
 
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -104,7 +137,10 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         }
         let round_ref = round_ref.as_ref().expect("round ref should be present");
 
-        let join_payload = canonical_join_payload(named.name);
+        let prepared = prepared_onboard
+            .get(named.name)
+            .expect("prepared onboard utxo should exist for join sender");
+        let join_payload = canonical_join_payload(named.name, prepared.outpoint.clone());
         named
             .user
             .send_new_round_join(round_ref, &join_payload)
@@ -123,7 +159,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         assert_eq!(join_payload.onboard.len(), 1);
         assert_eq!(
             join_payload.onboard[0].outpoint,
-            expected_onchain_outpoint(named.name)
+            prepared.outpoint
         );
         assert_eq!(join_payload.offboard.len(), 0);
         assert_eq!(
@@ -314,8 +350,10 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     trace.note("round_activation", "provider publishing round_start");
     provider
         .send_new_round_start(
-            ROUND_ID,
-            "round_id=r-2026-02-24-003;round_txid=VTXO_ROOT;status=activated;actor=Steve",
+            round_ref.as_ref().expect("round ref should be present"),
+            &NewRoundStartPayload {
+                round_tx: "BASE64_SIGNED_ROOT_TX_003".to_string(),
+            },
         )
         .await
         .expect("provider should send round_start");
@@ -324,7 +362,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     for named in &users {
         let start = named
             .user
-            .wait_for_new_round_start_event(provider.pubkey, ROUND_ID, Duration::from_secs(10))
+            .wait_for_new_round_start_event(provider.pubkey, round_ref.as_ref().expect("round ref should be present"), Duration::from_secs(10))
             .await
             .expect("user should wait for round_start")
             .expect("user should receive round_start");
@@ -334,6 +372,9 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             NEW_ROUND_START,
             Some(round_ref.as_ref().expect("round ref should be present")),
         );
+        let parsed_start = parse_new_round_start_payload(&start.content)
+            .expect("start payload should parse");
+        assert_eq!(parsed_start.round_tx, "BASE64_SIGNED_ROOT_TX_003");
         activated_receipts += 1;
     }
     assert_eq!(activated_receipts, users.len());
