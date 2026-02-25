@@ -470,6 +470,153 @@ pub struct PreparedAspFundingUtxo {
     pub confirmations: u64,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AspFundingPoolState {
+    Available,
+    Reserved,
+    Spent,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct AspFundingPoolEntry {
+    pub outpoint: String,
+    pub value_sats: u64,
+    pub confirmations: u64,
+    pub state: AspFundingPoolState,
+}
+
+#[allow(dead_code)]
+pub struct AspFundingPool {
+    entries: BTreeMap<String, AspFundingPoolEntry>,
+}
+
+#[allow(dead_code)]
+impl AspFundingPool {
+    pub fn new(utxos: Vec<PreparedAspFundingUtxo>) -> Self {
+        let mut entries = BTreeMap::new();
+        for utxo in utxos {
+            let duplicate = entries.contains_key(&utxo.outpoint);
+            assert!(!duplicate, "duplicate pool outpoint {}", utxo.outpoint);
+            entries.insert(
+                utxo.outpoint.clone(),
+                AspFundingPoolEntry {
+                    outpoint: utxo.outpoint,
+                    value_sats: utxo.value_sats,
+                    confirmations: utxo.confirmations,
+                    state: AspFundingPoolState::Available,
+                },
+            );
+        }
+        Self { entries }
+    }
+
+    pub fn available_count(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|entry| entry.state == AspFundingPoolState::Available)
+            .count()
+    }
+
+    pub fn reserved_count(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|entry| entry.state == AspFundingPoolState::Reserved)
+            .count()
+    }
+
+    pub fn spent_count(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|entry| entry.state == AspFundingPoolState::Spent)
+            .count()
+    }
+
+    pub fn reserve_for_amount(&mut self, required_sats: u64) -> Vec<String> {
+        assert!(
+            required_sats > 0,
+            "required_sats must be greater than zero when reserving pool UTXOs"
+        );
+
+        let mut candidates: Vec<&AspFundingPoolEntry> = self
+            .entries
+            .values()
+            .filter(|entry| entry.state == AspFundingPoolState::Available)
+            .collect();
+        candidates.sort_by(|a, b| {
+            a.confirmations
+                .cmp(&b.confirmations)
+                .then(a.outpoint.cmp(&b.outpoint))
+        });
+
+        let mut selected = Vec::new();
+        let mut selected_total = 0u64;
+        for candidate in candidates {
+            selected_total = selected_total.saturating_add(candidate.value_sats);
+            selected.push(candidate.outpoint.clone());
+            if selected_total >= required_sats {
+                break;
+            }
+        }
+
+        assert!(
+            selected_total >= required_sats,
+            "insufficient available pool balance: required {}, selected {}",
+            required_sats,
+            selected_total
+        );
+
+        for outpoint in &selected {
+            let entry = self
+                .entries
+                .get_mut(outpoint)
+                .expect("selected outpoint must exist");
+            assert_eq!(
+                entry.state,
+                AspFundingPoolState::Available,
+                "outpoint {} must be available when reserving",
+                outpoint
+            );
+            entry.state = AspFundingPoolState::Reserved;
+        }
+
+        selected
+    }
+
+    pub fn release(&mut self, outpoints: &[String]) {
+        for outpoint in outpoints {
+            let entry = self
+                .entries
+                .get_mut(outpoint)
+                .unwrap_or_else(|| panic!("unknown pool outpoint {}", outpoint));
+            assert_eq!(
+                entry.state,
+                AspFundingPoolState::Reserved,
+                "outpoint {} must be reserved to release",
+                outpoint
+            );
+            entry.state = AspFundingPoolState::Available;
+        }
+    }
+
+    pub fn consume(&mut self, outpoints: &[String]) {
+        for outpoint in outpoints {
+            let entry = self
+                .entries
+                .get_mut(outpoint)
+                .unwrap_or_else(|| panic!("unknown pool outpoint {}", outpoint));
+            assert_eq!(
+                entry.state,
+                AspFundingPoolState::Reserved,
+                "outpoint {} must be reserved to consume",
+                outpoint
+            );
+            entry.state = AspFundingPoolState::Spent;
+        }
+    }
+}
+
 pub async fn prepare_onboard_utxos_one_btc(
     trace: &mut TraceRecorder,
     wallets: &[(&str, String, String)],
