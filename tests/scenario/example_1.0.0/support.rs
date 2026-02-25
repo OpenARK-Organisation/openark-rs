@@ -498,6 +498,12 @@ pub const ASP_POOL_MIN_UTXO_COUNT: usize = 8;
 pub const ASP_POOL_TARGET_UTXO_VALUE_SATS: u64 = 10_000_000;
 #[allow(dead_code)]
 pub const ASP_POOL_MIN_CONFIRMATIONS: u64 = 1;
+#[allow(dead_code)]
+pub const ASP_TREE_CONSTRUCTION_FEERATE_SAT_PER_VB: u64 = 1;
+#[allow(dead_code)]
+pub const ASP_TREE_PROPOSAL_WORST_CASE_BASE_VBYTES: u64 = 300;
+#[allow(dead_code)]
+pub const ASP_TREE_PROPOSAL_WORST_CASE_PER_PARTICIPANT_VBYTES: u64 = 200;
 
 #[allow(dead_code)]
 impl AspFundingPool {
@@ -544,6 +550,22 @@ impl AspFundingPool {
         self.entries
             .values()
             .filter(|entry| entry.state == AspFundingPoolState::Available)
+            .map(|entry| entry.value_sats)
+            .sum()
+    }
+
+    pub fn reserved_value_sats(&self) -> u64 {
+        self.entries
+            .values()
+            .filter(|entry| entry.state == AspFundingPoolState::Reserved)
+            .map(|entry| entry.value_sats)
+            .sum()
+    }
+
+    pub fn spent_value_sats(&self) -> u64 {
+        self.entries
+            .values()
+            .filter(|entry| entry.state == AspFundingPoolState::Spent)
             .map(|entry| entry.value_sats)
             .sum()
     }
@@ -718,6 +740,18 @@ pub async fn initialize_default_asp_funding_pool(
         pool.available_value_sats()
     );
     pool
+}
+
+#[allow(dead_code)]
+pub fn estimate_worst_case_tree_proposal_vbytes(participant_count: usize) -> u64 {
+    ASP_TREE_PROPOSAL_WORST_CASE_BASE_VBYTES
+        + ASP_TREE_PROPOSAL_WORST_CASE_PER_PARTICIPANT_VBYTES * participant_count as u64
+}
+
+#[allow(dead_code)]
+pub fn estimate_tree_proposal_fee_budget_sats(participant_count: usize) -> u64 {
+    estimate_worst_case_tree_proposal_vbytes(participant_count)
+        * ASP_TREE_CONSTRUCTION_FEERATE_SAT_PER_VB
 }
 
 #[allow(dead_code)]

@@ -16,7 +16,8 @@ mod support;
 use support::{
     TraceRecorder, canonical_join_payload, canonical_start_prepared_payload,
     canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, fund_wallets_two_btc,
-    initialize_default_asp_funding_pool, prepare_onboard_utxos_one_btc, start_relay,
+    estimate_tree_proposal_fee_budget_sats, initialize_default_asp_funding_pool,
+    prepare_onboard_utxos_one_btc, start_relay,
 };
 
 const ROUND_ID: &str = "r-2026-02-24-003";
@@ -82,7 +83,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         ));
     }
     fund_wallets_two_btc(&wallets).await;
-    let _asp_pool = initialize_default_asp_funding_pool(
+    let mut asp_pool = initialize_default_asp_funding_pool(
         &mut trace,
         "Steve",
         &provider.wallet_receive_address(),
@@ -188,12 +189,41 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
 
     println!("[phase] Tree Proposal");
     trace.note("tree_proposal", "provider publishing proposal");
+    let proposal_fee_budget_sats = estimate_tree_proposal_fee_budget_sats(users.len());
+    let reserved_pool_outpoints = asp_pool.reserve_for_amount(proposal_fee_budget_sats);
+    trace.note(
+        "asp_pool_reserve",
+        &format!(
+            "phase=tree_proposal fee_budget_sats={} reserved_outpoints={:?}",
+            proposal_fee_budget_sats, reserved_pool_outpoints
+        ),
+    );
+    println!(
+        "[asp-pool] reserved_for_tree_proposal fee_budget_sats={} reserved_count={} reserved_value_sats={}",
+        proposal_fee_budget_sats,
+        reserved_pool_outpoints.len(),
+        asp_pool.reserved_value_sats()
+    );
     let proposal_payload = canonical_vtxo_tree_proposal_payload();
     let round_ref_for_proposal = round_ref.as_ref().expect("round ref should be present");
     provider
         .send_new_round_vtxo_tree_proposal(round_ref_for_proposal, &proposal_payload)
         .await
         .expect("provider should send proposal");
+    asp_pool.consume(&reserved_pool_outpoints);
+    trace.note(
+        "asp_pool_consume",
+        &format!(
+            "phase=tree_proposal consumed_outpoints={:?} spent_value_sats={}",
+            reserved_pool_outpoints,
+            asp_pool.spent_value_sats()
+        ),
+    );
+    println!(
+        "[asp-pool] consumed_for_tree_proposal spent_count={} spent_value_sats={}",
+        asp_pool.spent_count(),
+        asp_pool.spent_value_sats()
+    );
     println!("[Steve] published {NEW_ROUND_VTXO_TREE_PROPOSAL}");
 
     let mut proposal_ref: Option<nostr_sdk::prelude::EventId> = None;
@@ -385,6 +415,14 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     }
     assert_eq!(activated_receipts, users.len());
     println!("[phase] Round Activation complete: receipts={activated_receipts}");
+    println!(
+        "[asp-pool] final available={} reserved={} spent={} available_value_sats={} spent_value_sats={}",
+        asp_pool.available_count(),
+        asp_pool.reserved_count(),
+        asp_pool.spent_count(),
+        asp_pool.available_value_sats(),
+        asp_pool.spent_value_sats()
+    );
 
     println!(
         "[test] final state: round activated with {} users (Alice, Bob, Carol, Dave, Eve)",
