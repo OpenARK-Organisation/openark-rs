@@ -233,6 +233,14 @@ pub struct RegtestFundingHarness {
     client: reqwest::Client,
 }
 
+#[allow(dead_code)]
+struct ScannedAddressUtxo {
+    txid: String,
+    vout: u64,
+    amount_sats: u64,
+    confirmations: u64,
+}
+
 impl RegtestFundingHarness {
     pub async fn start() -> Self {
         let container = GenericImage::new("ruimarinho/bitcoin-core", "latest")
@@ -318,27 +326,55 @@ impl RegtestFundingHarness {
     }
 
     async fn scan_address_utxo(&self, address: &str) -> (String, u64, u64) {
+        let unspent = self
+            .scan_address_utxos(address)
+            .await
+            .into_iter()
+            .next()
+            .expect("expected at least one unspent for address");
+        (unspent.txid, unspent.vout, unspent.amount_sats)
+    }
+
+    async fn scan_address_utxos(&self, address: &str) -> Vec<ScannedAddressUtxo> {
         let descriptor = format!("addr({address})");
         let result = self
             .rpc_call("scantxoutset", json!(["start", [descriptor]]))
             .await
             .expect("scantxoutset should succeed");
-
-        let unspent = result["unspents"]
-            .as_array()
-            .and_then(|u| u.first())
-            .expect("expected at least one unspent for address");
-        let txid = unspent["txid"]
-            .as_str()
-            .expect("txid should be string")
-            .to_string();
-        let vout = unspent["vout"].as_u64().expect("vout should be u64");
-        let sats = (unspent["amount"]
-            .as_f64()
-            .expect("amount should be f64")
-            * 100_000_000.0)
-            .round() as u64;
-        (txid, vout, sats)
+        let tip_height = self
+            .rpc_call("getblockcount", json!([]))
+            .await
+            .expect("getblockcount should succeed")
+            .as_u64()
+            .expect("getblockcount should return u64");
+        let unspents = result["unspents"].as_array().expect("unspents should be array");
+        let mut utxos = Vec::new();
+        for unspent in unspents {
+            let txid = unspent["txid"]
+                .as_str()
+                .expect("txid should be string")
+                .to_string();
+            let vout = unspent["vout"].as_u64().expect("vout should be u64");
+            let amount_sats = (unspent["amount"]
+                .as_f64()
+                .expect("amount should be f64")
+                * 100_000_000.0)
+                .round() as u64;
+            let height = unspent["height"].as_u64().unwrap_or(0);
+            let confirmations = if height == 0 {
+                0
+            } else {
+                tip_height.saturating_sub(height) + 1
+            };
+            utxos.push(ScannedAddressUtxo {
+                txid,
+                vout,
+                amount_sats,
+                confirmations,
+            });
+        }
+        utxos.sort_by(|a, b| a.txid.cmp(&b.txid).then(a.vout.cmp(&b.vout)));
+        utxos
     }
 
     async fn scan_address_total_sats(&self, address: &str) -> u64 {
@@ -427,6 +463,13 @@ pub struct PreparedOnboardUtxo {
     pub amount_sats: u64,
 }
 
+#[allow(dead_code)]
+pub struct PreparedAspFundingUtxo {
+    pub outpoint: String,
+    pub value_sats: u64,
+    pub confirmations: u64,
+}
+
 pub async fn prepare_onboard_utxos_one_btc(
     trace: &mut TraceRecorder,
     wallets: &[(&str, String, String)],
@@ -472,5 +515,86 @@ pub async fn prepare_onboard_utxos_one_btc(
         );
     }
 
+    prepared
+}
+
+#[allow(dead_code)]
+pub async fn prepare_asp_funding_pool_utxos(
+    trace: &mut TraceRecorder,
+    asp_address: &str,
+    utxo_count: usize,
+    target_value_sats: u64,
+    min_confirmations: u64,
+) -> Vec<PreparedAspFundingUtxo> {
+    assert!(utxo_count > 0, "utxo_count must be greater than zero");
+    assert!(
+        target_value_sats > 0,
+        "target_value_sats must be greater than zero"
+    );
+
+    let harness = RegtestFundingHarness::start().await;
+    let miner_address = harness.get_new_miner_address().await;
+    harness.mine_blocks(101, &miner_address).await;
+
+    let target_value_btc = target_value_sats as f64 / 100_000_000.0;
+    let mut funding_txids = Vec::with_capacity(utxo_count);
+    for index in 0..utxo_count {
+        let txid = harness
+            .send_to_address_with_txid(asp_address, target_value_btc)
+            .await;
+        trace.note(
+            "asp_pool_prepare",
+            &format!(
+                "index={index} address={asp_address} funding_txid={txid} target_sats={target_value_sats}"
+            ),
+        );
+        funding_txids.push(txid);
+    }
+
+    harness
+        .mine_blocks(min_confirmations.max(1), &miner_address)
+        .await;
+
+    let all_utxos = harness.scan_address_utxos(asp_address).await;
+    let mut prepared = Vec::new();
+    for utxo in all_utxos {
+        if !funding_txids.contains(&utxo.txid) {
+            continue;
+        }
+        assert!(
+            utxo.confirmations >= min_confirmations,
+            "funding utxo {}:{} must have at least {} confirmations",
+            utxo.txid,
+            utxo.vout,
+            min_confirmations
+        );
+        assert_eq!(
+            utxo.amount_sats, target_value_sats,
+            "funding utxo {}:{} must match target value",
+            utxo.txid, utxo.vout
+        );
+        let outpoint = format!("{}:{}", utxo.txid, utxo.vout);
+        trace.note(
+            "asp_pool_prepared",
+            &format!(
+                "outpoint={outpoint} value_sats={} confirmations={}",
+                utxo.amount_sats, utxo.confirmations
+            ),
+        );
+        prepared.push(PreparedAspFundingUtxo {
+            outpoint,
+            value_sats: utxo.amount_sats,
+            confirmations: utxo.confirmations,
+        });
+    }
+
+    prepared.sort_by(|a, b| a.outpoint.cmp(&b.outpoint));
+    assert_eq!(
+        prepared.len(),
+        utxo_count,
+        "expected {} prepared ASP pool UTXOs, got {}",
+        utxo_count,
+        prepared.len()
+    );
     prepared
 }
