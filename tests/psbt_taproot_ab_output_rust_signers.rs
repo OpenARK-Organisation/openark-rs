@@ -1,11 +1,14 @@
 use bdk_wallet::bitcoin::{
-    Network,
+    absolute,
     bip32::{DerivationPath, Xpriv, Xpub},
     consensus::encode::serialize_hex,
     psbt::Psbt,
     secp256k1::Secp256k1,
+    transaction,
+    Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid,
+    Witness,
 };
-use bdk_wallet::{SignOptions, Wallet};
+use bdk_wallet::{KeychainKind, SignOptions, Wallet};
 use serde_json::{Value, json};
 use std::str::FromStr;
 use std::time::Duration;
@@ -19,6 +22,10 @@ use testcontainers::{
 const RPC_USER: &str = "rpcuser";
 const RPC_PASS: &str = "rpcpass";
 const RPC_PORT: u16 = 18443;
+
+const STEP2_SEND_TO_A_SATS: u64 = 100_000_000;
+const STEP4_SEND_TO_AB_SATS: u64 = 99_980_000;
+const STEP5_FEE_SATS: u64 = 20_000;
 
 struct BitcoindHarness {
     _container: ContainerAsync<GenericImage>,
@@ -60,7 +67,6 @@ impl BitcoindHarness {
         };
 
         harness.wait_until_ready().await;
-        harness.create_wallet("miner").await;
         harness
     }
 
@@ -74,109 +80,10 @@ impl BitcoindHarness {
         panic!("bitcoind RPC did not become ready in time");
     }
 
-    async fn create_wallet(&self, name: &str) {
-        self.rpc_call("createwallet", json!([name]))
-            .await
-            .unwrap_or_else(|e| panic!("createwallet {name} failed: {e}"));
-    }
-
-    async fn get_new_address(&self, wallet: &str, address_type: &str) -> String {
-        self.rpc_call_wallet(wallet, "getnewaddress", json!(["", address_type]))
-            .await
-            .expect("getnewaddress should succeed")
-            .as_str()
-            .expect("address should be string")
-            .to_string()
-    }
-
     async fn mine_blocks(&self, blocks: u64, address: &str) {
-        self.rpc_call_wallet("miner", "generatetoaddress", json!([blocks, address]))
+        self.rpc_call("generatetoaddress", json!([blocks, address]))
             .await
             .expect("generatetoaddress should succeed");
-    }
-
-    async fn send_to_address(&self, wallet: &str, address: &str, amount_btc: f64) -> String {
-        self.rpc_call_wallet(wallet, "sendtoaddress", json!([address, amount_btc]))
-            .await
-            .expect("sendtoaddress should succeed")
-            .as_str()
-            .expect("txid should be string")
-            .to_string()
-    }
-
-    async fn get_descriptor_with_checksum(&self, descriptor: &str) -> String {
-        let info = self
-            .rpc_call("getdescriptorinfo", json!([descriptor]))
-            .await
-            .expect("getdescriptorinfo should succeed");
-        let checksum = info["checksum"]
-            .as_str()
-            .expect("checksum should be string");
-        format!("{descriptor}#{checksum}")
-    }
-
-    async fn derive_single_address(&self, descriptor_with_checksum: &str) -> String {
-        self.rpc_call("deriveaddresses", json!([descriptor_with_checksum]))
-            .await
-            .expect("deriveaddresses should succeed")
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.as_str())
-            .expect("derived address expected")
-            .to_string()
-    }
-
-    async fn scan_address_utxo(&self, address: &str) -> (String, u64, f64) {
-        let descriptor = format!("addr({address})");
-        let result = self
-            .rpc_call("scantxoutset", json!(["start", [descriptor]]))
-            .await
-            .expect("scantxoutset should succeed");
-
-        let unspent = result["unspents"]
-            .as_array()
-            .and_then(|u| u.first())
-            .expect("expected at least one unspent for address");
-
-        let txid = unspent["txid"]
-            .as_str()
-            .expect("txid should be string")
-            .to_string();
-        let vout = unspent["vout"].as_u64().expect("vout should be u64");
-        let amount = unspent["amount"].as_f64().expect("amount should be f64");
-        (txid, vout, amount)
-    }
-
-    async fn create_psbt_one_input_one_output(
-        &self,
-        txid: &str,
-        vout: u64,
-        destination: &str,
-        amount_btc: f64,
-    ) -> String {
-        self.rpc_call(
-            "createpsbt",
-            json!([
-                [{"txid": txid, "vout": vout}],
-                [{destination: amount_btc}],
-                0,
-                true
-            ]),
-        )
-        .await
-        .expect("createpsbt should succeed")
-        .as_str()
-        .expect("psbt should be string")
-        .to_string()
-    }
-
-    async fn utxo_update_psbt(&self, psbt: &str, descriptors: &[String]) -> String {
-        self.rpc_call("utxoupdatepsbt", json!([psbt, descriptors]))
-            .await
-            .expect("utxoupdatepsbt should succeed")
-            .as_str()
-            .expect("updated psbt should be string")
-            .to_string()
     }
 
     async fn broadcast_raw_tx(&self, hex: &str) -> String {
@@ -188,22 +95,50 @@ impl BitcoindHarness {
             .to_string()
     }
 
+    async fn scan_address_utxo(&self, address: &str) -> (String, u64, u64) {
+        let descriptor = format!("addr({address})");
+        let result = self
+            .rpc_call("scantxoutset", json!(["start", [descriptor]]))
+            .await
+            .expect("scantxoutset should succeed");
+
+        let unspents = result["unspents"]
+            .as_array()
+            .expect("expected unspents array");
+        let unspent = unspents
+            .iter()
+            .min_by_key(|u| u["height"].as_u64().unwrap_or(u64::MAX))
+            .expect("expected at least one unspent for address");
+
+        let txid = unspent["txid"]
+            .as_str()
+            .expect("txid should be string")
+            .to_string();
+        let vout = unspent["vout"].as_u64().expect("vout should be u64");
+        let amount_btc = unspent["amount"].as_f64().expect("amount should be f64");
+        let amount_sats = btc_to_sats(amount_btc);
+        (txid, vout, amount_sats)
+    }
+
+    async fn scan_address_total_sats(&self, address: &str) -> u64 {
+        let descriptor = format!("addr({address})");
+        let result = self
+            .rpc_call("scantxoutset", json!(["start", [descriptor]]))
+            .await
+            .expect("scantxoutset should succeed");
+        let total_btc = result["total_amount"]
+            .as_f64()
+            .expect("total_amount should be f64");
+        btc_to_sats(total_btc)
+    }
+
     async fn get_raw_transaction_verbose(&self, txid: &str) -> Value {
         self.rpc_call("getrawtransaction", json!([txid, true]))
             .await
             .expect("getrawtransaction should succeed")
     }
 
-    async fn rpc_call_wallet(&self, wallet: &str, method: &str, params: Value) -> Result<Value, String> {
-        let url = format!("{}/wallet/{wallet}", self.rpc_url);
-        self.rpc_call_url(&url, method, params).await
-    }
-
     async fn rpc_call(&self, method: &str, params: Value) -> Result<Value, String> {
-        self.rpc_call_url(&self.rpc_url, method, params).await
-    }
-
-    async fn rpc_call_url(&self, url: &str, method: &str, params: Value) -> Result<Value, String> {
         let body = json!({
             "jsonrpc": "1.0",
             "id": "test",
@@ -213,7 +148,7 @@ impl BitcoindHarness {
 
         let response = self
             .client
-            .post(url)
+            .post(&self.rpc_url)
             .basic_auth(RPC_USER, Some(RPC_PASS))
             .json(&body)
             .send()
@@ -236,7 +171,80 @@ impl BitcoindHarness {
     }
 }
 
-fn descriptor_key_exprs() -> (String, String, String, String, String) {
+fn btc_to_sats(btc: f64) -> u64 {
+    (btc * 100_000_000.0).round() as u64
+}
+
+fn print_tx_outline(label: &str, tx: &Transaction) {
+    fn bytes_to_hex(bytes: &[u8]) -> String {
+        let mut out = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            out.push_str(&format!("{:02x}", b));
+        }
+        out
+    }
+
+    fn short_hex(bytes: &[u8]) -> String {
+        let full = bytes_to_hex(bytes);
+        if full.len() <= 64 {
+            return full;
+        }
+        format!("{}...{}", &full[..32], &full[full.len() - 32..])
+    }
+
+    fn sats_to_btc_str(sats: u64) -> String {
+        format!("{:.8}", sats as f64 / 100_000_000.0)
+    }
+
+    println!();
+    println!("========== tx/{label} ==========");
+    println!(
+        "version={} lock_time={} txid={} inputs={} outputs={}",
+        tx.version.0,
+        tx.lock_time.to_consensus_u32(),
+        tx.compute_txid(),
+        tx.input.len(),
+        tx.output.len()
+    );
+    for (i, input) in tx.input.iter().enumerate() {
+        println!(
+            "  input[{i}] prevout={}:{} seq={}",
+            input.previous_output.txid,
+            input.previous_output.vout,
+            input.sequence.to_consensus_u32()
+        );
+        println!("    witness_items={}", input.witness.len());
+        if input.witness.is_empty() {
+            println!("      (none)");
+        }
+        for (j, wit) in input.witness.iter().enumerate() {
+            let role = if input.witness.len() >= 2 && j == input.witness.len() - 1 {
+                "control_block"
+            } else if input.witness.len() >= 2 && j == input.witness.len() - 2 {
+                "script"
+            } else {
+                "stack_item"
+            };
+            println!(
+                "      witness[{i}][{j}] role={} len={} hex={}",
+                role,
+                wit.len(),
+                short_hex(wit)
+            );
+        }
+    }
+    for (i, output) in tx.output.iter().enumerate() {
+        println!(
+            "  output[{i}] value_sats={} value_btc={} script={:?}",
+            output.value.to_sat(),
+            sats_to_btc_str(output.value.to_sat()),
+            output.script_pubkey
+        );
+    }
+    println!("===============================");
+}
+
+fn descriptor_key_exprs() -> (String, String, String, String, String, String, String) {
     let secp = Secp256k1::new();
     let master_xprv = Xpriv::from_str("tprv8ZgxMBicQKsPeZRHk4rTG6orPS2CRNFX3njhUXx5vj9qGog5ZMH4uGReDWN5kCkY3jmWEtWause41CDvBRXD1shKknAMKxT99o9qUTRVC6m")
         .expect("hardcoded test xprv should parse");
@@ -250,6 +258,9 @@ fn descriptor_key_exprs() -> (String, String, String, String, String) {
     let internal_branch = master_xprv
         .derive_priv(&secp, &DerivationPath::from_str("m/2h").expect("valid path"))
         .expect("internal branch derivation should succeed");
+    let miner_branch = master_xprv
+        .derive_priv(&secp, &DerivationPath::from_str("m/3h").expect("valid path"))
+        .expect("miner branch derivation should succeed");
 
     let a_xpub = Xpub::from_priv(&secp, &a_branch);
     let b_xpub = Xpub::from_priv(&secp, &b_branch);
@@ -260,117 +271,313 @@ fn descriptor_key_exprs() -> (String, String, String, String, String) {
     let a_pub = format!("{a_xpub}/0/0");
     let b_pub = format!("{b_xpub}/0/0");
     let internal_pub = format!("{internal_xpub}/0/0");
+    let a_single = format!("tr({a_priv})");
+    let b_single = format!("tr({b_priv})");
+    (a_priv, b_priv, a_pub, b_pub, internal_pub, a_single, b_single)
+}
 
-    (a_priv, b_priv, a_pub, b_pub, internal_pub)
+fn build_single_input_two_output_psbt(
+    prev_txid: &str,
+    prev_vout: u64,
+    prev_value_sats: u64,
+    prev_spk: ScriptBuf,
+    dest1_spk: ScriptBuf,
+    dest1_sats: u64,
+    dest2_spk: ScriptBuf,
+    dest2_sats: u64,
+) -> Psbt {
+    let tx = Transaction {
+        version: transaction::Version(2),
+        lock_time: absolute::LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_str(prev_txid).expect("valid txid"),
+                vout: prev_vout as u32,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::new(),
+        }],
+        output: vec![
+            TxOut {
+                value: Amount::from_sat(dest1_sats),
+                script_pubkey: dest1_spk,
+            },
+            TxOut {
+                value: Amount::from_sat(dest2_sats),
+                script_pubkey: dest2_spk,
+            },
+        ],
+    };
+
+    let mut psbt = Psbt::from_unsigned_tx(tx).expect("unsigned tx should create PSBT");
+    psbt.inputs[0].witness_utxo = Some(TxOut {
+        value: Amount::from_sat(prev_value_sats),
+        script_pubkey: prev_spk,
+    });
+    psbt
+}
+
+fn build_single_input_one_output_psbt(
+    prev_txid: &str,
+    prev_vout: u64,
+    prev_value_sats: u64,
+    prev_spk: ScriptBuf,
+    dest_spk: ScriptBuf,
+    dest_sats: u64,
+) -> Psbt {
+    let tx = Transaction {
+        version: transaction::Version(2),
+        lock_time: absolute::LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_str(prev_txid).expect("valid txid"),
+                vout: prev_vout as u32,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: Amount::from_sat(dest_sats),
+            script_pubkey: dest_spk,
+        }],
+    };
+
+    let mut psbt = Psbt::from_unsigned_tx(tx).expect("unsigned tx should create PSBT");
+    psbt.inputs[0].witness_utxo = Some(TxOut {
+        value: Amount::from_sat(prev_value_sats),
+        script_pubkey: prev_spk,
+    });
+    psbt
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn regtest_psbt_taproot_ab_output_rust_wallet_signers() {
+async fn regtest_rust_does_all_building_and_signing_bitcoind_broadcasts_only() {
     let bitcoind = BitcoindHarness::start().await;
 
-    println!("[setup] fund miner");
-    let miner_address = bitcoind.get_new_address("miner", "bech32m").await;
-    bitcoind.mine_blocks(101, &miner_address).await;
-
-    let (a_priv_keyexpr, b_priv_keyexpr, a_pub_keyexpr, b_pub_keyexpr, internal_pub_keyexpr) =
+    let (a_priv_keyexpr, b_priv_keyexpr, a_pub_keyexpr, b_pub_keyexpr, internal_pub_keyexpr, a_single_desc, b_single_desc) =
         descriptor_key_exprs();
+    let miner_desc = {
+        let secp = Secp256k1::new();
+        let master_xprv = Xpriv::from_str("tprv8ZgxMBicQKsPeZRHk4rTG6orPS2CRNFX3njhUXx5vj9qGog5ZMH4uGReDWN5kCkY3jmWEtWause41CDvBRXD1shKknAMKxT99o9qUTRVC6m")
+            .expect("hardcoded test xprv should parse");
+        let miner_branch = master_xprv
+            .derive_priv(&secp, &DerivationPath::from_str("m/3h").expect("valid path"))
+            .expect("miner branch derivation should succeed");
+        format!("tr({miner_branch}/0/0)")
+    };
 
-    let watch_desc_raw =
-        format!("tr({internal_pub_keyexpr},multi_a(2,{a_pub_keyexpr},{b_pub_keyexpr}))");
-    let watch_desc = bitcoind.get_descriptor_with_checksum(&watch_desc_raw).await;
-    let ab_address = bitcoind.derive_single_address(&watch_desc).await;
-    println!("[phase1] A+B taproot address={ab_address}");
-
-    let a_sign_desc = format!("tr({internal_pub_keyexpr},multi_a(2,{a_priv_keyexpr},{b_pub_keyexpr}))");
-    let b_sign_desc = format!("tr({internal_pub_keyexpr},multi_a(2,{a_pub_keyexpr},{b_priv_keyexpr}))");
-
-    let wallet_a = Wallet::create_single(a_sign_desc)
+    let mut miner_wallet = Wallet::create_single(miner_desc)
         .network(Network::Regtest)
         .create_wallet_no_persist()
-        .expect("A signer wallet descriptor should be valid");
-    let wallet_b = Wallet::create_single(b_sign_desc)
+        .expect("miner wallet descriptor should be valid");
+    let mut wallet_a_single = Wallet::create_single(a_single_desc)
         .network(Network::Regtest)
         .create_wallet_no_persist()
-        .expect("B signer wallet descriptor should be valid");
+        .expect("A single-sig wallet should be valid");
+    let mut wallet_b_single = Wallet::create_single(b_single_desc)
+        .network(Network::Regtest)
+        .create_wallet_no_persist()
+        .expect("B single-sig wallet should be valid");
 
-    println!("[phase2] fund A+B output and confirm");
-    let fund_txid = bitcoind.send_to_address("miner", &ab_address, 1.0).await;
-    bitcoind.mine_blocks(1, &miner_address).await;
-
-    let (funded_txid, funded_vout, funded_amount) = bitcoind.scan_address_utxo(&ab_address).await;
-    assert_eq!(funded_txid, fund_txid, "funded outpoint should match txid");
-    assert!(funded_amount > 0.999, "expected ~1 BTC in A+B output");
-    println!(
-        "[phase2] funded outpoint={funded_txid}:{funded_vout} amount={funded_amount} BTC"
+    let ab_watch_desc = format!(
+        "tr({internal_pub_keyexpr},multi_a(2,{a_pub_keyexpr},{b_pub_keyexpr}))"
+    );
+    let ab_sign_desc_a = format!(
+        "tr({internal_pub_keyexpr},multi_a(2,{a_priv_keyexpr},{b_pub_keyexpr}))"
+    );
+    let ab_sign_desc_b = format!(
+        "tr({internal_pub_keyexpr},multi_a(2,{a_pub_keyexpr},{b_priv_keyexpr}))"
     );
 
-    println!("[phase3] create and enrich PSBT");
-    let destination = bitcoind.get_new_address("miner", "bech32m").await;
-    let send_amount = funded_amount - 0.0002;
-    let unsigned_psbt = bitcoind
-        .create_psbt_one_input_one_output(&funded_txid, funded_vout, &destination, send_amount)
-        .await;
-    let enriched_psbt = bitcoind
-        .utxo_update_psbt(&unsigned_psbt, std::slice::from_ref(&watch_desc))
-        .await;
+    let mut wallet_ab_watch = Wallet::create_single(ab_watch_desc)
+        .network(Network::Regtest)
+        .create_wallet_no_persist()
+        .expect("A+B watch wallet descriptor should be valid");
+    let wallet_ab_sign_a = Wallet::create_single(ab_sign_desc_a)
+        .network(Network::Regtest)
+        .create_wallet_no_persist()
+        .expect("A signer A+B descriptor should be valid");
+    let wallet_ab_sign_b = Wallet::create_single(ab_sign_desc_b)
+        .network(Network::Regtest)
+        .create_wallet_no_persist()
+        .expect("B signer A+B descriptor should be valid");
 
-    let sign_no_finalize = SignOptions {
-        trust_witness_utxo: true,
-        try_finalize: false,
-        ..Default::default()
-    };
-    let sign_finalize = SignOptions {
-        trust_witness_utxo: true,
-        try_finalize: true,
-        ..Default::default()
-    };
+    let miner_address = miner_wallet
+        .reveal_next_address(KeychainKind::External)
+        .address
+        .to_string();
+    let a_address = wallet_a_single
+        .reveal_next_address(KeychainKind::External)
+        .address
+        .to_string();
+    let b_address = wallet_b_single
+        .reveal_next_address(KeychainKind::External)
+        .address
+        .to_string();
+    let ab_address = wallet_ab_watch
+        .reveal_next_address(KeychainKind::External)
+        .address
+        .to_string();
 
-    println!("[phase4] A-only signing must not finalize");
-    let mut psbt_a_only = Psbt::from_str(&enriched_psbt).expect("valid base64 PSBT");
-    let a_only_finalized = wallet_a
-        .sign(&mut psbt_a_only, sign_finalize.clone())
-        .expect("A signer should process PSBT");
-    assert!(!a_only_finalized, "A-only signature must not finalize 2-of-2 spend");
+    println!("[step1] mine blocks to rust-generated miner address");
+    bitcoind.mine_blocks(120, &miner_address).await;
 
-    println!("[phase4] B-only signing must not finalize");
-    let mut psbt_b_only = Psbt::from_str(&enriched_psbt).expect("valid base64 PSBT");
-    let b_only_finalized = wallet_b
-        .sign(&mut psbt_b_only, sign_finalize.clone())
-        .expect("B signer should process PSBT");
-    assert!(!b_only_finalized, "B-only signature must not finalize 2-of-2 spend");
+    println!("[step2] send 1 BTC to A with rust-built PSBT");
+    let (miner_utxo_txid, miner_utxo_vout, miner_utxo_sats) = bitcoind.scan_address_utxo(&miner_address).await;
+    let a_spk = Address::from_str(&a_address)
+        .expect("valid A address")
+        .require_network(Network::Regtest)
+        .expect("A address should be regtest")
+        .script_pubkey();
+    let miner_change_spk = Address::from_str(&miner_address)
+        .expect("valid miner address")
+        .require_network(Network::Regtest)
+        .expect("miner address should be regtest")
+        .script_pubkey();
+    let miner_input_spk = miner_change_spk.clone();
+    let step2_fee = 20_000;
+    let step2_change = miner_utxo_sats
+        .checked_sub(STEP2_SEND_TO_A_SATS + step2_fee)
+        .expect("miner utxo should cover send + fee");
 
-    println!("[phase5] A then B signing must finalize");
-    let mut psbt_ab = Psbt::from_str(&enriched_psbt).expect("valid base64 PSBT");
-    let a_pass = wallet_a
-        .sign(&mut psbt_ab, sign_no_finalize)
-        .expect("A signer should add partial sig");
-    assert!(!a_pass, "A partial signing should not finalize");
-
-    let ab_finalized = wallet_b
-        .sign(&mut psbt_ab, sign_finalize.clone())
-        .expect("B signer should complete and finalize");
-    assert!(ab_finalized, "A+B signing should finalize PSBT");
-
-    let final_tx = psbt_ab
-        .extract_tx()
-        .expect("finalized PSBT should extract transaction");
-    let final_hex = serialize_hex(&final_tx);
-
-    println!("[phase6] broadcast and confirm");
-    let spend_txid = bitcoind.broadcast_raw_tx(&final_hex).await;
+    let mut step2_psbt = build_single_input_two_output_psbt(
+        &miner_utxo_txid,
+        miner_utxo_vout,
+        miner_utxo_sats,
+        miner_input_spk,
+        a_spk,
+        STEP2_SEND_TO_A_SATS,
+        miner_change_spk,
+        step2_change,
+    );
+    print_tx_outline("step2/unsigned", &step2_psbt.unsigned_tx);
+    let step2_finalized = miner_wallet
+        .sign(
+            &mut step2_psbt,
+            SignOptions {
+                trust_witness_utxo: true,
+                try_finalize: true,
+                ..Default::default()
+            },
+        )
+        .expect("miner signing should succeed");
+    assert!(step2_finalized, "miner tx to A should finalize");
+    let step2_tx = step2_psbt.extract_tx().expect("step2 extract tx");
+    print_tx_outline("step2/final", &step2_tx);
+    let step2_hex = serialize_hex(&step2_tx);
+    println!("[tx/step2/final] txid={} hex={}", step2_tx.compute_txid(), step2_hex);
+    let _step2_txid = bitcoind.broadcast_raw_tx(&step2_hex).await;
     bitcoind.mine_blocks(1, &miner_address).await;
 
-    let spend_verbose = bitcoind.get_raw_transaction_verbose(&spend_txid).await;
+    let (a_fund_txid, a_fund_vout, a_fund_sats) = bitcoind.scan_address_utxo(&a_address).await;
+    assert_eq!(a_fund_sats, STEP2_SEND_TO_A_SATS, "A should receive 1 BTC in step2");
+
+    println!("[step3] A+B taproot address created in rust: {ab_address}");
+
+    println!("[step4] A funds A+B taproot output");
+    let a_input_spk = Address::from_str(&a_address)
+        .expect("valid A address")
+        .require_network(Network::Regtest)
+        .expect("A address should be regtest")
+        .script_pubkey();
+    let ab_spk = Address::from_str(&ab_address)
+        .expect("valid A+B address")
+        .require_network(Network::Regtest)
+        .expect("A+B address should be regtest")
+        .script_pubkey();
+
+    let mut step4_psbt = build_single_input_one_output_psbt(
+        &a_fund_txid,
+        a_fund_vout,
+        a_fund_sats,
+        a_input_spk,
+        ab_spk.clone(),
+        STEP4_SEND_TO_AB_SATS,
+    );
+    print_tx_outline("step4/unsigned", &step4_psbt.unsigned_tx);
+    let step4_finalized = wallet_a_single
+        .sign(
+            &mut step4_psbt,
+            SignOptions {
+                trust_witness_utxo: true,
+                try_finalize: true,
+                ..Default::default()
+            },
+        )
+        .expect("A funding tx signing should succeed");
+    assert!(step4_finalized, "A funding tx should finalize");
+    let step4_tx = step4_psbt.extract_tx().expect("step4 extract tx");
+    print_tx_outline("step4/final", &step4_tx);
+    let step4_hex = serialize_hex(&step4_tx);
+    println!("[tx/step4/final] txid={} hex={}", step4_tx.compute_txid(), step4_hex);
+    let _step4_txid = bitcoind.broadcast_raw_tx(&step4_hex).await;
+    bitcoind.mine_blocks(1, &miner_address).await;
+
+    let (ab_fund_txid, ab_fund_vout, ab_fund_sats) = bitcoind.scan_address_utxo(&ab_address).await;
+    assert_eq!(ab_fund_sats, STEP4_SEND_TO_AB_SATS, "A+B output should be funded");
+
+    println!("[step5] A+B sign PSBT to spend A+B output to B");
+    let b_spk = Address::from_str(&b_address)
+        .expect("valid B address")
+        .require_network(Network::Regtest)
+        .expect("B address should be regtest")
+        .script_pubkey();
+    let step5_send_to_b = ab_fund_sats
+        .checked_sub(STEP5_FEE_SATS)
+        .expect("A+B input should cover fee");
+
+    let mut step5_psbt = build_single_input_one_output_psbt(
+        &ab_fund_txid,
+        ab_fund_vout,
+        ab_fund_sats,
+        ab_spk,
+        b_spk,
+        step5_send_to_b,
+    );
+    print_tx_outline("step5/unsigned", &step5_psbt.unsigned_tx);
+
+    let a_only_finalized = wallet_ab_sign_a
+        .sign(
+            &mut step5_psbt,
+            SignOptions {
+                trust_witness_utxo: true,
+                try_finalize: false,
+                ..Default::default()
+            },
+        )
+        .expect("A partial signing should succeed");
+    assert!(!a_only_finalized, "A-only should not finalize 2-of-2");
+
+    let ab_finalized = wallet_ab_sign_b
+        .sign(
+            &mut step5_psbt,
+            SignOptions {
+                trust_witness_utxo: true,
+                try_finalize: true,
+                ..Default::default()
+            },
+        )
+        .expect("B signing should complete PSBT");
+    assert!(ab_finalized, "A+B should finalize 2-of-2 spend");
+
+    let step5_tx = step5_psbt.extract_tx().expect("step5 extract tx");
+    print_tx_outline("step5/final", &step5_tx);
+    let step5_hex = serialize_hex(&step5_tx);
+    println!("[tx/step5/final] txid={} hex={}", step5_tx.compute_txid(), step5_hex);
+    let spend_to_b_txid = bitcoind.broadcast_raw_tx(&step5_hex).await;
+    bitcoind.mine_blocks(1, &miner_address).await;
+
+    println!("[step6] verify B got money");
+    let b_total_sats = bitcoind.scan_address_total_sats(&b_address).await;
+    assert_eq!(b_total_sats, step5_send_to_b, "B should receive full step5 output amount");
+
+    let spend_verbose = bitcoind.get_raw_transaction_verbose(&spend_to_b_txid).await;
     let confirmations = spend_verbose["confirmations"].as_u64().unwrap_or(0);
-    assert!(confirmations >= 1, "spend tx must be confirmed");
+    assert!(confirmations >= 1, "final spend tx must be confirmed");
 
-    let vin_txid = spend_verbose["vin"]
-        .as_array()
-        .and_then(|vin| vin.first())
-        .and_then(|vin0| vin0.get("txid"))
-        .and_then(|txid| txid.as_str())
-        .expect("spend tx vin[0].txid expected");
-    assert_eq!(vin_txid, funded_txid, "spend must consume funded A+B output");
-
-    println!("[done] Rust wallets signed the PSBT; bitcoind only provided chain services");
+    println!(
+        "[done] rust built addresses/psbts/signatures; bitcoind handled chain state and broadcast only"
+    );
 }
