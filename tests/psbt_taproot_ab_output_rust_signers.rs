@@ -9,6 +9,7 @@ use bdk_wallet::bitcoin::{
     Witness,
 };
 use bdk_wallet::{KeychainKind, SignOptions, Wallet};
+use openark_rs::print_tx_report;
 use serde_json::{Value, json};
 use std::str::FromStr;
 use std::time::Duration;
@@ -176,72 +177,7 @@ fn btc_to_sats(btc: f64) -> u64 {
 }
 
 fn print_tx_outline(label: &str, tx: &Transaction) {
-    fn bytes_to_hex(bytes: &[u8]) -> String {
-        let mut out = String::with_capacity(bytes.len() * 2);
-        for b in bytes {
-            out.push_str(&format!("{:02x}", b));
-        }
-        out
-    }
-
-    fn short_hex(bytes: &[u8]) -> String {
-        let full = bytes_to_hex(bytes);
-        if full.len() <= 64 {
-            return full;
-        }
-        format!("{}...{}", &full[..32], &full[full.len() - 32..])
-    }
-
-    fn sats_to_btc_str(sats: u64) -> String {
-        format!("{:.8}", sats as f64 / 100_000_000.0)
-    }
-
-    println!();
-    println!("========== tx/{label} ==========");
-    println!(
-        "version={} lock_time={} txid={} inputs={} outputs={}",
-        tx.version.0,
-        tx.lock_time.to_consensus_u32(),
-        tx.compute_txid(),
-        tx.input.len(),
-        tx.output.len()
-    );
-    for (i, input) in tx.input.iter().enumerate() {
-        println!(
-            "  input[{i}] prevout={}:{} seq={}",
-            input.previous_output.txid,
-            input.previous_output.vout,
-            input.sequence.to_consensus_u32()
-        );
-        println!("    witness_items={}", input.witness.len());
-        if input.witness.is_empty() {
-            println!("      (none)");
-        }
-        for (j, wit) in input.witness.iter().enumerate() {
-            let role = if input.witness.len() >= 2 && j == input.witness.len() - 1 {
-                "control_block"
-            } else if input.witness.len() >= 2 && j == input.witness.len() - 2 {
-                "script"
-            } else {
-                "stack_item"
-            };
-            println!(
-                "      witness[{i}][{j}] role={} len={} hex={}",
-                role,
-                wit.len(),
-                short_hex(wit)
-            );
-        }
-    }
-    for (i, output) in tx.output.iter().enumerate() {
-        println!(
-            "  output[{i}] value_sats={} value_btc={} script={:?}",
-            output.value.to_sat(),
-            sats_to_btc_str(output.value.to_sat()),
-            output.script_pubkey
-        );
-    }
-    println!("===============================");
+    print_tx_report(label, tx);
 }
 
 fn descriptor_key_exprs() -> (String, String, String, String, String, String, String) {
@@ -258,9 +194,6 @@ fn descriptor_key_exprs() -> (String, String, String, String, String, String, St
     let internal_branch = master_xprv
         .derive_priv(&secp, &DerivationPath::from_str("m/2h").expect("valid path"))
         .expect("internal branch derivation should succeed");
-    let miner_branch = master_xprv
-        .derive_priv(&secp, &DerivationPath::from_str("m/3h").expect("valid path"))
-        .expect("miner branch derivation should succeed");
 
     let a_xpub = Xpub::from_priv(&secp, &a_branch);
     let b_xpub = Xpub::from_priv(&secp, &b_branch);

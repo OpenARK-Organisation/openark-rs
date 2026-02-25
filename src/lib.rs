@@ -1,5 +1,6 @@
 pub mod actors;
 pub mod round;
+pub mod tx_debug;
 pub mod wallet;
 
 pub use actors::{OpenArkServiceProvider, OpenArkUser};
@@ -8,6 +9,7 @@ pub use round::{
     NewRoundJoinOffboard,
     NewRoundJoinOnboard,
     NewRoundJoinPayload,
+    NewRoundStartPayload,
     NewRoundStartPreparedPayload,
     NewRoundVtxoTreeAcceptPayload,
     NewRoundVtxoTreeProposalPayload,
@@ -32,7 +34,9 @@ pub use round::{
     new_round_join_event_builder,
     new_round_join_payload_json,
     new_round_prepare_start_event_builder,
+    new_round_start_event_builder,
     new_round_start_prepared_event_builder,
+    new_round_start_payload_json,
     new_round_start_prepared_payload_json,
     new_round_vtxo_tree_accept_event_builder,
     new_round_vtxo_tree_accept_payload_json,
@@ -41,17 +45,20 @@ pub use round::{
     event_round_id,
     parse_new_round_join_payload,
     parse_new_round_initiate_payload,
+    parse_new_round_start_payload,
     parse_new_round_start_prepared_payload,
     parse_new_round_vtxo_tree_accept_payload,
     parse_new_round_vtxo_tree_proposal_payload,
     validate_new_round_initiate_event,
     validate_new_round_join_event_reference,
     validate_new_round_prepare_start_event,
+    validate_new_round_start_event,
     validate_new_round_start_prepared_event,
     validate_new_round_vtxo_tree_accept_event,
     validate_new_round_vtxo_tree_proposal_event,
 };
 pub use wallet::create_regtest_bdk_wallet;
+pub use tx_debug::{format_tx_report, print_tx_report};
 
 pub const PROVIDER_MESSAGE: &str = "hello";
 pub const USER_REPLY_MESSAGE: &str = "how are you today";
