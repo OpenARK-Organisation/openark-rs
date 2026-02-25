@@ -54,3 +54,7 @@ path = "tests/scenario/example_1.0.0/round_step5_phase1_negative_validation.rs"
 [[test]]
 name = "round_step6_phase5_negative_validation"
 path = "tests/scenario/example_1.0.0/round_step6_phase5_negative_validation.rs"
+
+[[test]]
+name = "asp_funding_pool_negative"
+path = "tests/scenario/example_1.0.0/asp_funding_pool_negative.rs"

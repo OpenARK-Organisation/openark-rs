@@ -490,6 +490,7 @@ pub struct AspFundingPoolEntry {
 #[allow(dead_code)]
 pub struct AspFundingPool {
     entries: BTreeMap<String, AspFundingPoolEntry>,
+    min_confirmations_required: u64,
 }
 
 #[allow(dead_code)]
@@ -508,6 +509,13 @@ pub const ASP_TREE_PROPOSAL_WORST_CASE_PER_PARTICIPANT_VBYTES: u64 = 200;
 #[allow(dead_code)]
 impl AspFundingPool {
     pub fn new(utxos: Vec<PreparedAspFundingUtxo>) -> Self {
+        Self::new_with_min_confirmations(utxos, ASP_POOL_MIN_CONFIRMATIONS)
+    }
+
+    pub fn new_with_min_confirmations(
+        utxos: Vec<PreparedAspFundingUtxo>,
+        min_confirmations_required: u64,
+    ) -> Self {
         let mut entries = BTreeMap::new();
         for utxo in utxos {
             let duplicate = entries.contains_key(&utxo.outpoint);
@@ -522,7 +530,10 @@ impl AspFundingPool {
                 },
             );
         }
-        Self { entries }
+        Self {
+            entries,
+            min_confirmations_required,
+        }
     }
 
     pub fn available_count(&self) -> usize {
@@ -579,7 +590,10 @@ impl AspFundingPool {
         let mut candidates: Vec<&AspFundingPoolEntry> = self
             .entries
             .values()
-            .filter(|entry| entry.state == AspFundingPoolState::Available)
+            .filter(|entry| {
+                entry.state == AspFundingPoolState::Available
+                    && entry.confirmations >= self.min_confirmations_required
+            })
             .collect();
         candidates.sort_by(|a, b| {
             a.confirmations
