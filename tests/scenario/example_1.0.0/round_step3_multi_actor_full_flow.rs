@@ -89,6 +89,8 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         &provider.wallet_receive_address(),
     )
     .await;
+    let asp_pool_initial_available_count = asp_pool.available_count();
+    let asp_pool_initial_available_value_sats = asp_pool.available_value_sats();
     let onboard_wallets: Vec<(&str, String, String)> = users
         .iter()
         .map(|named| {
@@ -415,6 +417,27 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     }
     assert_eq!(activated_receipts, users.len());
     println!("[phase] Round Activation complete: receipts={activated_receipts}");
+    trace.note(
+        "asp_pool_summary",
+        &format!(
+            "initial_available_count={} initial_available_value_sats={} consumed_count={} consumed_value_sats={} remaining_count={} remaining_value_sats={}",
+            asp_pool_initial_available_count,
+            asp_pool_initial_available_value_sats,
+            asp_pool.spent_count(),
+            asp_pool.spent_value_sats(),
+            asp_pool.available_count(),
+            asp_pool.available_value_sats()
+        ),
+    );
+    println!(
+        "[asp-pool] summary initial_available_count={} initial_available_value_sats={} consumed_count={} consumed_value_sats={} remaining_count={} remaining_value_sats={}",
+        asp_pool_initial_available_count,
+        asp_pool_initial_available_value_sats,
+        asp_pool.spent_count(),
+        asp_pool.spent_value_sats(),
+        asp_pool.available_count(),
+        asp_pool.available_value_sats()
+    );
     println!(
         "[asp-pool] final available={} reserved={} spent={} available_value_sats={} spent_value_sats={}",
         asp_pool.available_count(),
