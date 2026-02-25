@@ -13,7 +13,7 @@ mod support;
 use support::{
     TraceRecorder, canonical_join_payload, canonical_start_prepared_payload,
     canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, fund_wallets_two_btc,
-    prepare_onboard_utxos_one_btc, start_relay,
+    initialize_default_asp_funding_pool, prepare_onboard_utxos_one_btc, start_relay,
 };
 
 fn assert_round_event(
@@ -91,6 +91,12 @@ async fn failure_missing_new_round_join_blocks_phase() {
         ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
         ("Carol", carol.wallet_receive_address(), carol.wallet_seed_phrase().to_string()),
     ]).await;
+    let _asp_pool = initialize_default_asp_funding_pool(
+        &mut trace,
+        "Steve",
+        &provider.wallet_receive_address(),
+    )
+    .await;
     let prepared_onboard = prepare_onboard_utxos_one_btc(
         &mut trace,
         &[
@@ -207,6 +213,12 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
         ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
     ]).await;
+    let _asp_pool = initialize_default_asp_funding_pool(
+        &mut trace,
+        "Steve",
+        &provider.wallet_receive_address(),
+    )
+    .await;
     let prepared_onboard = prepare_onboard_utxos_one_btc(
         &mut trace,
         &[
@@ -389,6 +401,12 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
         ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
         ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
     ]).await;
+    let _asp_pool = initialize_default_asp_funding_pool(
+        &mut trace,
+        "Steve",
+        &provider.wallet_receive_address(),
+    )
+    .await;
     let prepared_onboard = prepare_onboard_utxos_one_btc(
         &mut trace,
         &[
@@ -607,6 +625,12 @@ async fn failure_late_start_prepared_blocks_activation() {
         ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
         ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
     ]).await;
+    let _asp_pool = initialize_default_asp_funding_pool(
+        &mut trace,
+        "Steve",
+        &provider.wallet_receive_address(),
+    )
+    .await;
     let prepared_onboard = prepare_onboard_utxos_one_btc(
         &mut trace,
         &[

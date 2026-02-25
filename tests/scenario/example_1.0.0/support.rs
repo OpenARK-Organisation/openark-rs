@@ -493,6 +493,13 @@ pub struct AspFundingPool {
 }
 
 #[allow(dead_code)]
+pub const ASP_POOL_MIN_UTXO_COUNT: usize = 8;
+#[allow(dead_code)]
+pub const ASP_POOL_TARGET_UTXO_VALUE_SATS: u64 = 10_000_000;
+#[allow(dead_code)]
+pub const ASP_POOL_MIN_CONFIRMATIONS: u64 = 1;
+
+#[allow(dead_code)]
 impl AspFundingPool {
     pub fn new(utxos: Vec<PreparedAspFundingUtxo>) -> Self {
         let mut entries = BTreeMap::new();
@@ -531,6 +538,14 @@ impl AspFundingPool {
             .values()
             .filter(|entry| entry.state == AspFundingPoolState::Spent)
             .count()
+    }
+
+    pub fn available_value_sats(&self) -> u64 {
+        self.entries
+            .values()
+            .filter(|entry| entry.state == AspFundingPoolState::Available)
+            .map(|entry| entry.value_sats)
+            .sum()
     }
 
     pub fn reserve_for_amount(&mut self, required_sats: u64) -> Vec<String> {
@@ -663,6 +678,46 @@ pub async fn prepare_onboard_utxos_one_btc(
     }
 
     prepared
+}
+
+#[allow(dead_code)]
+pub async fn initialize_default_asp_funding_pool(
+    trace: &mut TraceRecorder,
+    asp_name: &str,
+    asp_address: &str,
+) -> AspFundingPool {
+    let prepared = prepare_asp_funding_pool_utxos(
+        trace,
+        asp_address,
+        ASP_POOL_MIN_UTXO_COUNT,
+        ASP_POOL_TARGET_UTXO_VALUE_SATS,
+        ASP_POOL_MIN_CONFIRMATIONS,
+    )
+    .await;
+    let pool = AspFundingPool::new(prepared);
+    assert!(
+        pool.available_count() >= ASP_POOL_MIN_UTXO_COUNT,
+        "ASP pool for {asp_name} must have at least {} available UTXOs",
+        ASP_POOL_MIN_UTXO_COUNT
+    );
+    trace.note(
+        "asp_pool_snapshot",
+        &format!(
+            "actor={asp_name} available_count={} reserved_count={} spent_count={} available_value_sats={}",
+            pool.available_count(),
+            pool.reserved_count(),
+            pool.spent_count(),
+            pool.available_value_sats()
+        ),
+    );
+    println!(
+        "[asp-pool] actor={asp_name} available={} reserved={} spent={} available_value_sats={}",
+        pool.available_count(),
+        pool.reserved_count(),
+        pool.spent_count(),
+        pool.available_value_sats()
+    );
+    pool
 }
 
 #[allow(dead_code)]

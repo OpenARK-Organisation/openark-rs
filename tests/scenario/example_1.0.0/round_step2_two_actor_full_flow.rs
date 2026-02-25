@@ -18,7 +18,7 @@ use support::{
     PREPARE_FUNDING_OUTPOINT_0, PROPOSAL_VTXO_OUTPOINT_0, TraceRecorder,
     canonical_join_payload, canonical_start_prepared_payload,
     canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, fund_wallets_two_btc,
-    prepare_onboard_utxos_one_btc, start_relay,
+    initialize_default_asp_funding_pool, prepare_onboard_utxos_one_btc, start_relay,
 };
 
 const ROUND_ID: &str = "r-2026-02-24-002";
@@ -69,6 +69,12 @@ async fn step2_two_actor_kind150_full_phase_flow() {
         ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
         ("Alice", user.wallet_receive_address(), user.wallet_seed_phrase().to_string()),
     ]).await;
+    let _asp_pool = initialize_default_asp_funding_pool(
+        &mut trace,
+        "Steve",
+        &provider.wallet_receive_address(),
+    )
+    .await;
     let prepared_onboard = prepare_onboard_utxos_one_btc(
         &mut trace,
         &[(
