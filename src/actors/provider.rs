@@ -1,15 +1,14 @@
+use bdk_wallet::{KeychainKind, Wallet};
 use nostr_sdk::prelude::*;
 use std::sync::Mutex;
 use std::time::Duration;
-use bdk_wallet::{KeychainKind, Wallet};
 
-use crate::round::message::{
-    NewRoundStartPayload, NewRoundVtxoTreeProposalPayload,
-};
+use crate::round::message::{NewRoundStartPayload, NewRoundVtxoTreeProposalPayload};
 use crate::round::transport::{
     send_new_round_initiate_message, send_new_round_prepare_start_message,
-    send_new_round_start_message, send_new_round_vtxo_tree_proposal_message, wait_for_new_round_join_message,
-    wait_for_new_round_start_prepared_message, wait_for_new_round_vtxo_tree_accept_message,
+    send_new_round_start_message, send_new_round_vtxo_tree_proposal_message,
+    wait_for_new_round_join_message, wait_for_new_round_start_prepared_message,
+    wait_for_new_round_vtxo_tree_accept_message,
 };
 use crate::{PROVIDER_MESSAGE, USER_REPLY_MESSAGE};
 
@@ -88,8 +87,10 @@ impl OpenArkServiceProvider {
         &self,
         closing_block: u64,
         recycled_block: u64,
+        leaf_timeout: u64,
     ) -> Result<()> {
-        send_new_round_initiate_message(&self.client, closing_block, recycled_block).await
+        send_new_round_initiate_message(&self.client, closing_block, recycled_block, leaf_timeout)
+            .await
     }
 
     pub async fn wait_for_new_round_join_event(
@@ -131,7 +132,8 @@ impl OpenArkServiceProvider {
         initiate_event_id: &EventId,
         proposal_event_id: &EventId,
     ) -> Result<()> {
-        send_new_round_prepare_start_message(&self.client, initiate_event_id, proposal_event_id).await
+        send_new_round_prepare_start_message(&self.client, initiate_event_id, proposal_event_id)
+            .await
     }
 
     pub async fn wait_for_new_round_start_prepared_event(
@@ -147,7 +149,8 @@ impl OpenArkServiceProvider {
             initiate_event_id,
             prepare_start_event_id,
             timeout,
-        ).await
+        )
+        .await
     }
 
     pub async fn send_new_round_start(

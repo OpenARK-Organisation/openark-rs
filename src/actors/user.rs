@@ -1,17 +1,16 @@
+use bdk_wallet::{KeychainKind, Wallet};
 use nostr_sdk::prelude::*;
 use std::sync::Mutex;
 use std::time::Duration;
-use bdk_wallet::{KeychainKind, Wallet};
 
 use crate::round::message::{
-    NewRoundJoinPayload, NewRoundStartPreparedPayload,
-    NewRoundVtxoTreeAcceptPayload,
+    NewRoundJoinPayload, NewRoundStartPreparedPayload, NewRoundVtxoTreeAcceptPayload,
 };
 use crate::round::transport::{
     send_new_round_join_message, send_new_round_start_prepared_message,
     send_new_round_vtxo_tree_accept_message, wait_for_new_round_initiate_message,
-    wait_for_new_round_prepare_start_message, wait_for_new_round_vtxo_tree_proposal_message,
-    wait_for_new_round_start_message,
+    wait_for_new_round_prepare_start_message, wait_for_new_round_start_message,
+    wait_for_new_round_vtxo_tree_proposal_message,
 };
 use crate::{PROVIDER_MESSAGE, USER_REPLY_MESSAGE};
 
@@ -51,6 +50,10 @@ impl OpenArkUser {
             .reveal_next_address(KeychainKind::External)
             .address
             .to_string()
+    }
+
+    pub fn round_user_pubkey_hex(&self) -> String {
+        crate::derive_bip340_xonly_pubkey_from_seed_phrase(&self.seed_phrase)
     }
 
     pub async fn reply_when_provider_says_hello(
@@ -144,7 +147,8 @@ impl OpenArkUser {
             initiate_event_id,
             proposal_event_id,
             timeout,
-        ).await
+        )
+        .await
     }
 
     pub async fn send_new_round_start_prepared(
@@ -158,7 +162,8 @@ impl OpenArkUser {
             initiate_event_id,
             prepare_start_event_id,
             payload,
-        ).await
+        )
+        .await
     }
 
     pub async fn wait_for_new_round_start_event(
@@ -167,12 +172,7 @@ impl OpenArkUser {
         initiate_event_id: &EventId,
         timeout: Duration,
     ) -> Result<Option<Event>> {
-        wait_for_new_round_start_message(
-            &self.client,
-            provider_pubkey,
-            initiate_event_id,
-            timeout,
-        )
-        .await
+        wait_for_new_round_start_message(&self.client, provider_pubkey, initiate_event_id, timeout)
+            .await
     }
 }

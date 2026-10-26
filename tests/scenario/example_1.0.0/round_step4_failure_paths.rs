@@ -5,8 +5,8 @@ use openark_rs::{
     event_has_message_version, event_has_round_id, event_is_openark_kind_150,
     parse_new_round_initiate_payload, parse_new_round_join_payload,
     parse_new_round_start_prepared_payload, parse_new_round_vtxo_tree_accept_payload,
-    validate_new_round_start_prepared_event,
-    validate_new_round_vtxo_tree_accept_event, validate_new_round_vtxo_tree_proposal_event,
+    validate_new_round_start_prepared_event, validate_new_round_vtxo_tree_accept_event,
+    validate_new_round_vtxo_tree_proposal_event,
 };
 use std::time::Duration;
 mod support;
@@ -30,6 +30,7 @@ fn assert_round_event(
             .expect("initiate payload should parse");
         assert_eq!(payload.closing_block, 910000);
         assert_eq!(payload.recycled_block, 910144);
+        assert_eq!(payload.leaf_timeout, 10);
     } else if message_type == NEW_ROUND_JOIN {
         let round_ref = round_ref.expect("round ref should be set");
         assert!(event_has_event_reference(event, round_ref));
@@ -54,7 +55,10 @@ fn is_valid_accept_payload(content: &str) -> bool {
     let Some(payload) = parse_new_round_vtxo_tree_accept_payload(content) else {
         return false;
     };
-    payload.vtxo_tree_signatures.values().all(|sig| sig.starts_with("BASE64_SIG_"))
+    payload
+        .vtxo_tree_signatures
+        .values()
+        .all(|sig| sig.starts_with("BASE64_SIG_"))
 }
 
 fn is_valid_prepared_payload(content: &str) -> bool {
@@ -82,15 +86,36 @@ async fn failure_missing_new_round_join_blocks_phase() {
     let provider = OpenArkServiceProvider::connect(&relay_url)
         .await
         .expect("provider should connect");
-    let alice = OpenArkUser::connect(&relay_url).await.expect("alice connect");
+    let alice = OpenArkUser::connect(&relay_url)
+        .await
+        .expect("alice connect");
     let bob = OpenArkUser::connect(&relay_url).await.expect("bob connect");
-    let carol = OpenArkUser::connect(&relay_url).await.expect("carol connect");
+    let carol = OpenArkUser::connect(&relay_url)
+        .await
+        .expect("carol connect");
     fund_wallets_two_btc(&[
-        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
-        ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
-        ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
-        ("Carol", carol.wallet_receive_address(), carol.wallet_seed_phrase().to_string()),
-    ]).await;
+        (
+            "Steve",
+            provider.wallet_receive_address(),
+            provider.wallet_seed_phrase().to_string(),
+        ),
+        (
+            "Alice",
+            alice.wallet_receive_address(),
+            alice.wallet_seed_phrase().to_string(),
+        ),
+        (
+            "Bob",
+            bob.wallet_receive_address(),
+            bob.wallet_seed_phrase().to_string(),
+        ),
+        (
+            "Carol",
+            carol.wallet_receive_address(),
+            carol.wallet_seed_phrase().to_string(),
+        ),
+    ])
+    .await;
     let _asp_pool = initialize_default_asp_funding_pool(
         &mut trace,
         "Steve",
@@ -100,9 +125,21 @@ async fn failure_missing_new_round_join_blocks_phase() {
     let prepared_onboard = prepare_onboard_utxos_one_btc(
         &mut trace,
         &[
-            ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
-            ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
-            ("Carol", carol.wallet_receive_address(), carol.wallet_seed_phrase().to_string()),
+            (
+                "Alice",
+                alice.wallet_receive_address(),
+                alice.wallet_seed_phrase().to_string(),
+            ),
+            (
+                "Bob",
+                bob.wallet_receive_address(),
+                bob.wallet_seed_phrase().to_string(),
+            ),
+            (
+                "Carol",
+                carol.wallet_receive_address(),
+                carol.wallet_seed_phrase().to_string(),
+            ),
         ],
     )
     .await;
@@ -116,7 +153,7 @@ async fn failure_missing_new_round_join_blocks_phase() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("initiate send");
     println!("[Steve] published {NEW_ROUND_INITIATE}");
@@ -137,16 +174,24 @@ async fn failure_missing_new_round_join_blocks_phase() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
-    let alice_join_payload = canonical_join_payload("Alice", prepared_onboard
-        .get("Alice")
-        .expect("Alice onboard utxo should exist")
-        .outpoint
-        .clone());
-    let bob_join_payload = canonical_join_payload("Bob", prepared_onboard
-        .get("Bob")
-        .expect("Bob onboard utxo should exist")
-        .outpoint
-        .clone());
+    let alice_join_payload = canonical_join_payload(
+        "Alice",
+        alice.round_user_pubkey_hex(),
+        prepared_onboard
+            .get("Alice")
+            .expect("Alice onboard utxo should exist")
+            .outpoint
+            .clone(),
+    );
+    let bob_join_payload = canonical_join_payload(
+        "Bob",
+        bob.round_user_pubkey_hex(),
+        prepared_onboard
+            .get("Bob")
+            .expect("Bob onboard utxo should exist")
+            .outpoint
+            .clone(),
+    );
 
     alice
         .send_new_round_join(&round_ref, &alice_join_payload)
@@ -166,17 +211,14 @@ async fn failure_missing_new_round_join_blocks_phase() {
             .expect("provider receive join");
         println!("[Steve] received join from {name} id={}", join.id);
         assert_round_event(&join, NEW_ROUND_JOIN, ROUND_ID, Some(&round_ref));
-        let join_payload = parse_new_round_join_payload(&join.content)
-            .expect("join payload should parse");
+        let join_payload =
+            parse_new_round_join_payload(&join.content).expect("join payload should parse");
         assert_eq!(join_payload.onboard.len(), 1);
         let prepared = prepared_onboard
             .get(name)
             .expect("prepared onboard utxo should exist for join sender");
         assert_eq!(prepared.amount_sats, 100_000_000);
-        assert_eq!(
-            join_payload.onboard[0].outpoint,
-            prepared.outpoint
-        );
+        assert_eq!(join_payload.onboard[0].outpoint, prepared.outpoint);
         assert_eq!(join_payload.offboard.len(), 0);
         joins += 1;
     }
@@ -206,13 +248,28 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
     let provider = OpenArkServiceProvider::connect(&relay_url)
         .await
         .expect("provider should connect");
-    let alice = OpenArkUser::connect(&relay_url).await.expect("alice connect");
+    let alice = OpenArkUser::connect(&relay_url)
+        .await
+        .expect("alice connect");
     let bob = OpenArkUser::connect(&relay_url).await.expect("bob connect");
     fund_wallets_two_btc(&[
-        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
-        ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
-        ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
-    ]).await;
+        (
+            "Steve",
+            provider.wallet_receive_address(),
+            provider.wallet_seed_phrase().to_string(),
+        ),
+        (
+            "Alice",
+            alice.wallet_receive_address(),
+            alice.wallet_seed_phrase().to_string(),
+        ),
+        (
+            "Bob",
+            bob.wallet_receive_address(),
+            bob.wallet_seed_phrase().to_string(),
+        ),
+    ])
+    .await;
     let _asp_pool = initialize_default_asp_funding_pool(
         &mut trace,
         "Steve",
@@ -222,8 +279,16 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
     let prepared_onboard = prepare_onboard_utxos_one_btc(
         &mut trace,
         &[
-            ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
-            ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+            (
+                "Alice",
+                alice.wallet_receive_address(),
+                alice.wallet_seed_phrase().to_string(),
+            ),
+            (
+                "Bob",
+                bob.wallet_receive_address(),
+                bob.wallet_seed_phrase().to_string(),
+            ),
         ],
     )
     .await;
@@ -237,7 +302,7 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("initiate send");
     let mut round_ref: Option<nostr_sdk::prelude::EventId> = None;
@@ -255,16 +320,24 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
-    let alice_join_payload = canonical_join_payload("Alice", prepared_onboard
-        .get("Alice")
-        .expect("Alice onboard utxo should exist")
-        .outpoint
-        .clone());
-    let bob_join_payload = canonical_join_payload("Bob", prepared_onboard
-        .get("Bob")
-        .expect("Bob onboard utxo should exist")
-        .outpoint
-        .clone());
+    let alice_join_payload = canonical_join_payload(
+        "Alice",
+        alice.round_user_pubkey_hex(),
+        prepared_onboard
+            .get("Alice")
+            .expect("Alice onboard utxo should exist")
+            .outpoint
+            .clone(),
+    );
+    let bob_join_payload = canonical_join_payload(
+        "Bob",
+        bob.round_user_pubkey_hex(),
+        prepared_onboard
+            .get("Bob")
+            .expect("Bob onboard utxo should exist")
+            .outpoint
+            .clone(),
+    );
 
     alice
         .send_new_round_join(&round_ref, &alice_join_payload)
@@ -280,8 +353,8 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
             .await
             .expect("provider wait join")
             .expect("provider receive join");
-        let parsed = parse_new_round_join_payload(&join.content)
-            .expect("join payload should parse");
+        let parsed =
+            parse_new_round_join_payload(&join.content).expect("join payload should parse");
         assert_eq!(parsed.onboard.len(), 1);
         let prepared = prepared_onboard
             .get(name)
@@ -359,7 +432,10 @@ async fn failure_invalid_vtxo_tree_accept_token_blocks_phase() {
         ROUND_ID,
         Some(&round_ref),
     );
-    assert!(bob_accept.is_none(), "invalid accept should be filtered out");
+    assert!(
+        bob_accept.is_none(),
+        "invalid accept should be filtered out"
+    );
 
     let mut valid = 0usize;
     if validate_new_round_vtxo_tree_accept_event(&alice_accept, &round_ref, &proposal_ref).is_ok()
@@ -394,13 +470,28 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
     let provider = OpenArkServiceProvider::connect(&relay_url)
         .await
         .expect("provider should connect");
-    let alice = OpenArkUser::connect(&relay_url).await.expect("alice connect");
+    let alice = OpenArkUser::connect(&relay_url)
+        .await
+        .expect("alice connect");
     let bob = OpenArkUser::connect(&relay_url).await.expect("bob connect");
     fund_wallets_two_btc(&[
-        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
-        ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
-        ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
-    ]).await;
+        (
+            "Steve",
+            provider.wallet_receive_address(),
+            provider.wallet_seed_phrase().to_string(),
+        ),
+        (
+            "Alice",
+            alice.wallet_receive_address(),
+            alice.wallet_seed_phrase().to_string(),
+        ),
+        (
+            "Bob",
+            bob.wallet_receive_address(),
+            bob.wallet_seed_phrase().to_string(),
+        ),
+    ])
+    .await;
     let _asp_pool = initialize_default_asp_funding_pool(
         &mut trace,
         "Steve",
@@ -410,8 +501,16 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
     let prepared_onboard = prepare_onboard_utxos_one_btc(
         &mut trace,
         &[
-            ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
-            ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+            (
+                "Alice",
+                alice.wallet_receive_address(),
+                alice.wallet_seed_phrase().to_string(),
+            ),
+            (
+                "Bob",
+                bob.wallet_receive_address(),
+                bob.wallet_seed_phrase().to_string(),
+            ),
         ],
     )
     .await;
@@ -425,7 +524,7 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("initiate send");
     let mut round_ref: Option<nostr_sdk::prelude::EventId> = None;
@@ -443,16 +542,24 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
-    let alice_join_payload = canonical_join_payload("Alice", prepared_onboard
-        .get("Alice")
-        .expect("Alice onboard utxo should exist")
-        .outpoint
-        .clone());
-    let bob_join_payload = canonical_join_payload("Bob", prepared_onboard
-        .get("Bob")
-        .expect("Bob onboard utxo should exist")
-        .outpoint
-        .clone());
+    let alice_join_payload = canonical_join_payload(
+        "Alice",
+        alice.round_user_pubkey_hex(),
+        prepared_onboard
+            .get("Alice")
+            .expect("Alice onboard utxo should exist")
+            .outpoint
+            .clone(),
+    );
+    let bob_join_payload = canonical_join_payload(
+        "Bob",
+        bob.round_user_pubkey_hex(),
+        prepared_onboard
+            .get("Bob")
+            .expect("Bob onboard utxo should exist")
+            .outpoint
+            .clone(),
+    );
 
     alice
         .send_new_round_join(&round_ref, &alice_join_payload)
@@ -467,8 +574,8 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
             .await
             .expect("provider wait join")
             .expect("provider receive join");
-        let parsed = parse_new_round_join_payload(&join.content)
-            .expect("join payload should parse");
+        let parsed =
+            parse_new_round_join_payload(&join.content).expect("join payload should parse");
         assert_eq!(parsed.onboard.len(), 1);
         let prepared = prepared_onboard
             .get(name)
@@ -551,9 +658,10 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
 
     let alice_start_prepared = canonical_start_prepared_payload("Alice");
     let mut bob_start_prepared = canonical_start_prepared_payload("Bob");
-    bob_start_prepared
-        .forfeit_signatures
-        .insert("not-a-hex-txid:0".to_string(), "BASE64_FORFEIT_SIG_BAD_Bob".to_string());
+    bob_start_prepared.forfeit_signatures.insert(
+        "not-a-hex-txid:0".to_string(),
+        "BASE64_FORFEIT_SIG_BAD_Bob".to_string(),
+    );
     alice
         .send_new_round_start_prepared(&round_ref, &prepare_start_ref, &alice_start_prepared)
         .await
@@ -582,12 +690,20 @@ async fn failure_invalid_start_prepared_token_blocks_activation() {
         .await
         .expect("wait bob prepared");
 
-    assert_round_event(&alice_prepared, NEW_ROUND_START_PREPARED, ROUND_ID, Some(&round_ref));
+    assert_round_event(
+        &alice_prepared,
+        NEW_ROUND_START_PREPARED,
+        ROUND_ID,
+        Some(&round_ref),
+    );
     assert!(
         validate_new_round_start_prepared_event(&alice_prepared, &round_ref, &prepare_start_ref)
             .is_ok()
     );
-    assert!(bob_prepared.is_none(), "invalid start_prepared should be filtered out");
+    assert!(
+        bob_prepared.is_none(),
+        "invalid start_prepared should be filtered out"
+    );
 
     let mut valid = 0usize;
     if is_valid_prepared_payload(&alice_prepared.content) {
@@ -618,13 +734,28 @@ async fn failure_late_start_prepared_blocks_activation() {
     let provider = OpenArkServiceProvider::connect(&relay_url)
         .await
         .expect("provider should connect");
-    let alice = OpenArkUser::connect(&relay_url).await.expect("alice connect");
+    let alice = OpenArkUser::connect(&relay_url)
+        .await
+        .expect("alice connect");
     let bob = OpenArkUser::connect(&relay_url).await.expect("bob connect");
     fund_wallets_two_btc(&[
-        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
-        ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
-        ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
-    ]).await;
+        (
+            "Steve",
+            provider.wallet_receive_address(),
+            provider.wallet_seed_phrase().to_string(),
+        ),
+        (
+            "Alice",
+            alice.wallet_receive_address(),
+            alice.wallet_seed_phrase().to_string(),
+        ),
+        (
+            "Bob",
+            bob.wallet_receive_address(),
+            bob.wallet_seed_phrase().to_string(),
+        ),
+    ])
+    .await;
     let _asp_pool = initialize_default_asp_funding_pool(
         &mut trace,
         "Steve",
@@ -634,8 +765,16 @@ async fn failure_late_start_prepared_blocks_activation() {
     let prepared_onboard = prepare_onboard_utxos_one_btc(
         &mut trace,
         &[
-            ("Alice", alice.wallet_receive_address(), alice.wallet_seed_phrase().to_string()),
-            ("Bob", bob.wallet_receive_address(), bob.wallet_seed_phrase().to_string()),
+            (
+                "Alice",
+                alice.wallet_receive_address(),
+                alice.wallet_seed_phrase().to_string(),
+            ),
+            (
+                "Bob",
+                bob.wallet_receive_address(),
+                bob.wallet_seed_phrase().to_string(),
+            ),
         ],
     )
     .await;
@@ -649,7 +788,7 @@ async fn failure_late_start_prepared_blocks_activation() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("initiate send");
     let mut round_ref: Option<nostr_sdk::prelude::EventId> = None;
@@ -667,16 +806,24 @@ async fn failure_late_start_prepared_blocks_activation() {
         }
     }
     let round_ref = round_ref.expect("round ref should be present");
-    let alice_join_payload = canonical_join_payload("Alice", prepared_onboard
-        .get("Alice")
-        .expect("Alice onboard utxo should exist")
-        .outpoint
-        .clone());
-    let bob_join_payload = canonical_join_payload("Bob", prepared_onboard
-        .get("Bob")
-        .expect("Bob onboard utxo should exist")
-        .outpoint
-        .clone());
+    let alice_join_payload = canonical_join_payload(
+        "Alice",
+        alice.round_user_pubkey_hex(),
+        prepared_onboard
+            .get("Alice")
+            .expect("Alice onboard utxo should exist")
+            .outpoint
+            .clone(),
+    );
+    let bob_join_payload = canonical_join_payload(
+        "Bob",
+        bob.round_user_pubkey_hex(),
+        prepared_onboard
+            .get("Bob")
+            .expect("Bob onboard utxo should exist")
+            .outpoint
+            .clone(),
+    );
 
     alice
         .send_new_round_join(&round_ref, &alice_join_payload)
@@ -691,8 +838,8 @@ async fn failure_late_start_prepared_blocks_activation() {
             .await
             .expect("wait join")
             .expect("receive join");
-        let parsed = parse_new_round_join_payload(&join.content)
-            .expect("join payload should parse");
+        let parsed =
+            parse_new_round_join_payload(&join.content).expect("join payload should parse");
         assert_eq!(parsed.onboard.len(), 1);
         let prepared = prepared_onboard
             .get(name)
@@ -781,8 +928,8 @@ async fn failure_late_start_prepared_blocks_activation() {
     let bob_late = async {
         tokio::time::sleep(Duration::from_secs(2)).await;
         bob.send_new_round_start_prepared(&round_ref, &prepare_start_ref, &bob_start_prepared)
-        .await
-        .expect("bob late prepared send");
+            .await
+            .expect("bob late prepared send");
         println!("[Bob] late {NEW_ROUND_START_PREPARED} published");
     };
 
@@ -796,7 +943,12 @@ async fn failure_late_start_prepared_blocks_activation() {
         .await
         .expect("wait alice prepared")
         .expect("receive alice prepared");
-    assert_round_event(&alice_prepared, NEW_ROUND_START_PREPARED, ROUND_ID, Some(&round_ref));
+    assert_round_event(
+        &alice_prepared,
+        NEW_ROUND_START_PREPARED,
+        ROUND_ID,
+        Some(&round_ref),
+    );
     assert!(
         validate_new_round_start_prepared_event(&alice_prepared, &round_ref, &prepare_start_ref)
             .is_ok()
@@ -814,7 +966,10 @@ async fn failure_late_start_prepared_blocks_activation() {
 
     assert!(bob_timeout.is_none());
     println!("[Steve] BLOCKED: late start_prepared from Bob missed timeout window");
-    trace.note("blocked", "late start_prepared from Bob missed timeout window");
+    trace.note(
+        "blocked",
+        "late start_prepared from Bob missed timeout window",
+    );
 
     bob_late.await;
     trace.finish(

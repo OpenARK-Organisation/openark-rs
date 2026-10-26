@@ -168,10 +168,7 @@ fn decode_csv_pk_tapscript(script: &[u8]) -> Option<CsvPkInfo> {
     if i + 34 != script.len() {
         return None;
     }
-    Some(CsvPkInfo {
-        csv_blocks: n,
-        key,
-    })
+    Some(CsvPkInfo { csv_blocks: n, key })
 }
 
 fn decode_cltv_pk_tapscript(script: &[u8]) -> Option<CltvPkInfo> {

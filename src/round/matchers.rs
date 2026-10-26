@@ -2,12 +2,12 @@ use nostr_sdk::prelude::*;
 use serde_json::Value;
 
 use super::message::{
-    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START, NEW_ROUND_START_PREPARED,
-    NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL, ROUND_MESSAGE_VERSION,
-    openark_round_kind,
-    parse_new_round_initiate_payload, parse_new_round_join_payload, parse_new_round_start_payload,
-    parse_new_round_start_prepared_payload,
-    parse_new_round_vtxo_tree_accept_payload, parse_new_round_vtxo_tree_proposal_payload,
+    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START,
+    NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
+    ROUND_MESSAGE_VERSION, openark_round_kind, parse_new_round_initiate_payload,
+    parse_new_round_join_payload, parse_new_round_start_payload,
+    parse_new_round_start_prepared_payload, parse_new_round_vtxo_tree_accept_payload,
+    parse_new_round_vtxo_tree_proposal_payload,
 };
 
 pub fn event_is_openark_kind_150(event: &Event) -> bool {
@@ -154,7 +154,10 @@ pub fn validate_new_round_vtxo_tree_accept_event(
     }
     let parsed: Value =
         serde_json::from_str(&event.content).map_err(|_| "invalid_vtxo_tree_accept_payload")?;
-    if !parsed.get("vtxo_tree_signatures").is_some_and(|v| v.is_object()) {
+    if !parsed
+        .get("vtxo_tree_signatures")
+        .is_some_and(|v| v.is_object())
+    {
         return Err("invalid_vtxo_tree_accept_payload");
     }
     if parse_new_round_vtxo_tree_accept_payload(&event.content).is_none() {
@@ -206,7 +209,9 @@ pub fn validate_new_round_start_prepared_event(
     if event_event_reference_by_marker(event, Marker::Root) != Some(*expected_initiate_event_id) {
         return Err("missing_or_wrong_root_reference");
     }
-    if event_event_reference_by_marker(event, Marker::Reply) != Some(*expected_prepare_start_event_id) {
+    if event_event_reference_by_marker(event, Marker::Reply)
+        != Some(*expected_prepare_start_event_id)
+    {
         return Err("missing_or_wrong_reply_reference");
     }
     if parse_new_round_start_prepared_payload(&event.content).is_none() {

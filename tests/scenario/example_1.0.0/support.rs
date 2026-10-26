@@ -1,26 +1,25 @@
+use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::env;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
-use std::collections::BTreeMap;
-use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use nostr_sdk::prelude::Event;
 use openark_rs::{
     NewRoundJoinKeys, NewRoundJoinOffboard, NewRoundJoinOnboard, NewRoundJoinPayload,
-    NewRoundStartPreparedPayload, NewRoundVtxoTreeAcceptPayload,
-    NewRoundVtxoTreeProposalPayload, NewRoundVtxoTreeProposalRecycle,
+    NewRoundStartPreparedPayload, NewRoundVtxoTreeAcceptPayload, NewRoundVtxoTreeProposalPayload,
+    Step3ProposalBuildInput, build_step3_proposal_payload,
 };
 use serde_json::{Value, json};
+use testcontainers::ImageExt;
 use testcontainers::{
-    ContainerAsync,
-    GenericImage,
+    ContainerAsync, GenericImage,
     core::{IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
-use testcontainers::ImageExt;
 
 pub async fn start_relay() -> (testcontainers::ContainerAsync<GenericImage>, String) {
     println!("[relay] starting strfry test container");
@@ -41,7 +40,11 @@ pub async fn start_relay() -> (testcontainers::ContainerAsync<GenericImage>, Str
 }
 
 #[allow(dead_code)]
-pub fn canonical_join_payload(actor: &str, onboard_outpoint: String) -> NewRoundJoinPayload {
+pub fn canonical_join_payload(
+    actor: &str,
+    user_pubkey: String,
+    onboard_outpoint: String,
+) -> NewRoundJoinPayload {
     // Onboarding outpoints are runtime-prepared, confirmed 1 BTC UTXOs.
     NewRoundJoinPayload {
         onboard: vec![NewRoundJoinOnboard {
@@ -49,7 +52,7 @@ pub fn canonical_join_payload(actor: &str, onboard_outpoint: String) -> NewRound
         }],
         offboard: Vec::<NewRoundJoinOffboard>::new(),
         keys: NewRoundJoinKeys {
-            user_pubkey: format!("{actor}-user-pubkey"),
+            user_pubkey,
             agent_pubkey: format!("{actor}-agent-pubkey"),
         },
         address_of_last_resort: None,
@@ -69,21 +72,24 @@ pub const PREPARE_FUNDING_OUTPOINT_0: &str =
 
 #[allow(dead_code)]
 pub fn canonical_vtxo_tree_proposal_payload() -> NewRoundVtxoTreeProposalPayload {
-    NewRoundVtxoTreeProposalPayload {
-        root_tx: "BASE64_ROOT_TX".to_string(),
-        vtxo_tree: vec![
-            "BASE64_VTXO_TX_0".to_string(),
-            "BASE64_VTXO_TX_1".to_string(),
+    let input = Step3ProposalBuildInput {
+        round_label: "r-step3-sim".to_string(),
+        participants: vec![
+            "Alice".to_string(),
+            "Bob".to_string(),
+            "Carol".to_string(),
+            "Dave".to_string(),
+            "Eve".to_string(),
         ],
-        forfeit_tree: vec![
-            "BASE64_FORFEIT_TX_0".to_string(),
-            "BASE64_FORFEIT_TX_1".to_string(),
+        onboard_outpoints: vec![
+            PROPOSAL_VTXO_OUTPOINT_0.to_string(),
+            PROPOSAL_VTXO_OUTPOINT_1.to_string(),
         ],
-        recycle: NewRoundVtxoTreeProposalRecycle {
-            unilateral_tx: "BASE64_RECYCLE_UNILATERAL_TX".to_string(),
-            cooperative_tx: "BASE64_RECYCLE_COOPERATIVE_TX".to_string(),
-        },
-    }
+        closing_block: 910_000,
+        recycled_block: 910_144,
+        leaf_timeout: 10,
+    };
+    build_step3_proposal_payload(&input)
 }
 
 #[allow(dead_code)]
@@ -213,7 +219,9 @@ impl TraceRecorder {
 }
 
 fn trace_dir() -> Option<String> {
-    env::var("OPENARK_TRACE_DIR").ok().filter(|s| !s.trim().is_empty())
+    env::var("OPENARK_TRACE_DIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
 }
 
 fn now_ms() -> u128 {
@@ -295,7 +303,7 @@ impl RegtestFundingHarness {
             .unwrap_or_else(|e| panic!("createwallet {name} failed: {e}"));
     }
 
-    async fn get_new_miner_address(&self) -> String {
+    pub async fn get_new_miner_address(&self) -> String {
         self.rpc_call_wallet("miner", "getnewaddress", json!(["", "bech32m"]))
             .await
             .expect("getnewaddress should succeed")
@@ -304,13 +312,28 @@ impl RegtestFundingHarness {
             .to_string()
     }
 
-    async fn mine_blocks(&self, blocks: u64, address: &str) {
+    pub async fn mine_blocks(&self, blocks: u64, address: &str) {
         self.rpc_call_wallet("miner", "generatetoaddress", json!([blocks, address]))
             .await
             .expect("generatetoaddress should succeed");
     }
 
-    async fn send_to_address(&self, address: &str, amount_btc: f64) {
+    pub async fn broadcast_raw_tx(&self, hex: &str) -> String {
+        self.rpc_call("sendrawtransaction", json!([hex]))
+            .await
+            .expect("sendrawtransaction should succeed")
+            .as_str()
+            .expect("txid should be string")
+            .to_string()
+    }
+
+    pub async fn try_broadcast_raw_tx(&self, hex: &str) -> Result<String, String> {
+        self.rpc_call("sendrawtransaction", json!([hex]))
+            .await
+            .map(|v| v.as_str().unwrap_or_default().to_string())
+    }
+
+    pub async fn send_to_address(&self, address: &str, amount_btc: f64) {
         self.rpc_call_wallet("miner", "sendtoaddress", json!([address, amount_btc]))
             .await
             .expect("sendtoaddress should succeed");
@@ -325,7 +348,7 @@ impl RegtestFundingHarness {
             .to_string()
     }
 
-    async fn scan_address_utxo(&self, address: &str) -> (String, u64, u64) {
+    pub async fn scan_address_utxo(&self, address: &str) -> (String, u64, u64) {
         let unspent = self
             .scan_address_utxos(address)
             .await
@@ -347,7 +370,9 @@ impl RegtestFundingHarness {
             .expect("getblockcount should succeed")
             .as_u64()
             .expect("getblockcount should return u64");
-        let unspents = result["unspents"].as_array().expect("unspents should be array");
+        let unspents = result["unspents"]
+            .as_array()
+            .expect("unspents should be array");
         let mut utxos = Vec::new();
         for unspent in unspents {
             let txid = unspent["txid"]
@@ -355,9 +380,7 @@ impl RegtestFundingHarness {
                 .expect("txid should be string")
                 .to_string();
             let vout = unspent["vout"].as_u64().expect("vout should be u64");
-            let amount_sats = (unspent["amount"]
-                .as_f64()
-                .expect("amount should be f64")
+            let amount_sats = (unspent["amount"].as_f64().expect("amount should be f64")
                 * 100_000_000.0)
                 .round() as u64;
             let height = unspent["height"].as_u64().unwrap_or(0);
@@ -377,7 +400,7 @@ impl RegtestFundingHarness {
         utxos
     }
 
-    async fn scan_address_total_sats(&self, address: &str) -> u64 {
+    pub async fn scan_address_total_sats(&self, address: &str) -> u64 {
         let descriptor = format!("addr({address})");
         let result = self
             .rpc_call("scantxoutset", json!(["start", [descriptor]]))
@@ -389,7 +412,12 @@ impl RegtestFundingHarness {
         (total_btc * 100_000_000.0).round() as u64
     }
 
-    async fn rpc_call_wallet(&self, wallet: &str, method: &str, params: Value) -> Result<Value, String> {
+    async fn rpc_call_wallet(
+        &self,
+        wallet: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
         let url = format!("{}/wallet/{wallet}", self.rpc_url);
         self.rpc_call_url(&url, method, params).await
     }
@@ -422,10 +450,15 @@ impl RegtestFundingHarness {
             .map_err(|e| format!("RPC JSON decode failed for {method}: {e}"))?;
 
         if !status.is_success() {
-            return Err(format!("RPC HTTP status error for {method}: {status}, body: {json}"));
+            return Err(format!(
+                "RPC HTTP status error for {method}: {status}, body: {json}"
+            ));
         }
         if !json["error"].is_null() {
-            return Err(format!("RPC returned error for {method}: {}", json["error"]));
+            return Err(format!(
+                "RPC returned error for {method}: {}",
+                json["error"]
+            ));
         }
         Ok(json["result"].clone())
     }

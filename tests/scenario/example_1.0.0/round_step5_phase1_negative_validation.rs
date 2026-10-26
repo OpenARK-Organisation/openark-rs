@@ -41,7 +41,7 @@ async fn failure_initiate_missing_v_tag_is_rejected() {
     // Missing required ["v","1.0.0"] tag.
     let malformed = EventBuilder::new(
         kind_150(),
-        r#"{"closing_block":910000,"recycled_block":910144}"#,
+        r#"{"closing_block":910000,"recycled_block":910144,"leaf_timeout":10}"#,
     )
     .tags([Tag::hashtag(NEW_ROUND_INITIATE)]);
     raw_provider
@@ -103,7 +103,7 @@ async fn failure_join_missing_or_wrong_e_tag_is_rejected() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("provider should publish initiate");
     let initiate = user
@@ -171,7 +171,7 @@ async fn failure_join_missing_v_tag_is_rejected() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("provider should publish initiate");
     let initiate = user
@@ -211,7 +211,7 @@ async fn failure_join_invalid_json_is_rejected() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("provider should publish initiate");
     let initiate = user
@@ -252,7 +252,7 @@ async fn failure_join_missing_keys_or_invalid_outpoint_is_rejected() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("provider should publish initiate");
     let initiate = user
@@ -321,7 +321,7 @@ async fn failure_join_with_round_id_in_content_is_rejected() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("provider should publish initiate");
     let initiate = user

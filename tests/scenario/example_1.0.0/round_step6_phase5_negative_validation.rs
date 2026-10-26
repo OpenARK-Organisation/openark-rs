@@ -30,7 +30,7 @@ async fn publish_valid_initiate_and_get_ref(
 ) -> EventId {
     let initiate = EventBuilder::new(
         kind_150(),
-        r#"{"closing_block":910000,"recycled_block":910144}"#,
+        r#"{"closing_block":910000,"recycled_block":910144,"leaf_timeout":10}"#,
     )
     .tags([
         Tag::hashtag(NEW_ROUND_INITIATE),
@@ -58,12 +58,14 @@ async fn failure_start_missing_v_tag_is_rejected() {
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let round_ref = publish_valid_initiate_and_get_ref(&user, &raw_provider, raw_provider_pubkey).await;
+    let round_ref =
+        publish_valid_initiate_and_get_ref(&user, &raw_provider, raw_provider_pubkey).await;
 
-    let missing_v = EventBuilder::new(kind_150(), r#"{"round_tx":"BASE64_SIGNED_ROOT_TX"}"#).tags([
-        Tag::hashtag(NEW_ROUND_START),
-        Tag::custom(TagKind::custom("e"), [round_ref.to_string()]),
-    ]);
+    let missing_v =
+        EventBuilder::new(kind_150(), r#"{"round_tx":"BASE64_SIGNED_ROOT_TX"}"#).tags([
+            Tag::hashtag(NEW_ROUND_START),
+            Tag::custom(TagKind::custom("e"), [round_ref.to_string()]),
+        ]);
     raw_provider
         .send_event_builder(missing_v)
         .await
@@ -73,7 +75,10 @@ async fn failure_start_missing_v_tag_is_rejected() {
         .wait_for_new_round_start_event(raw_provider_pubkey, &round_ref, Duration::from_secs(1))
         .await
         .expect("wait should succeed");
-    assert!(received.is_none(), "start without version tag must be ignored");
+    assert!(
+        received.is_none(),
+        "start without version tag must be ignored"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -86,12 +91,14 @@ async fn failure_start_missing_or_wrong_e_tag_is_rejected() {
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let round_ref = publish_valid_initiate_and_get_ref(&user, &raw_provider, raw_provider_pubkey).await;
+    let round_ref =
+        publish_valid_initiate_and_get_ref(&user, &raw_provider, raw_provider_pubkey).await;
 
-    let missing_e = EventBuilder::new(kind_150(), r#"{"round_tx":"BASE64_SIGNED_ROOT_TX"}"#).tags([
-        Tag::hashtag(NEW_ROUND_START),
-        Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
-    ]);
+    let missing_e =
+        EventBuilder::new(kind_150(), r#"{"round_tx":"BASE64_SIGNED_ROOT_TX"}"#).tags([
+            Tag::hashtag(NEW_ROUND_START),
+            Tag::custom(TagKind::custom("v"), [ROUND_MESSAGE_VERSION]),
+        ]);
     raw_provider
         .send_event_builder(missing_e)
         .await
@@ -101,7 +108,10 @@ async fn failure_start_missing_or_wrong_e_tag_is_rejected() {
         .wait_for_new_round_start_event(raw_provider_pubkey, &round_ref, Duration::from_secs(1))
         .await
         .expect("wait should succeed");
-    assert!(received_missing_e.is_none(), "start without e tag must be ignored");
+    assert!(
+        received_missing_e.is_none(),
+        "start without e tag must be ignored"
+    );
 
     let wrong_e = EventBuilder::new(kind_150(), r#"{"round_tx":"BASE64_SIGNED_ROOT_TX"}"#).tags([
         Tag::hashtag(NEW_ROUND_START),
@@ -120,7 +130,10 @@ async fn failure_start_missing_or_wrong_e_tag_is_rejected() {
         .wait_for_new_round_start_event(raw_provider_pubkey, &round_ref, Duration::from_secs(1))
         .await
         .expect("wait should succeed");
-    assert!(received_wrong_e.is_none(), "start with wrong e tag must be ignored");
+    assert!(
+        received_wrong_e.is_none(),
+        "start with wrong e tag must be ignored"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -133,7 +146,8 @@ async fn failure_start_invalid_payload_is_rejected() {
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let round_ref = publish_valid_initiate_and_get_ref(&user, &raw_provider, raw_provider_pubkey).await;
+    let round_ref =
+        publish_valid_initiate_and_get_ref(&user, &raw_provider, raw_provider_pubkey).await;
 
     let missing_round_tx = EventBuilder::new(kind_150(), r#"{}"#).tags([
         Tag::hashtag(NEW_ROUND_START),

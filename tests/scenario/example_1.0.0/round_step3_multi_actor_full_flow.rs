@@ -1,23 +1,37 @@
+use bdk_wallet::bitcoin::{
+    absolute,
+    bip32::{DerivationPath, Xpriv, Xpub},
+    consensus::encode::serialize_hex,
+    psbt::Psbt,
+    secp256k1::Secp256k1,
+    transaction, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid,
+    Witness, XOnlyPublicKey,
+};
+use bdk_wallet::{KeychainKind, SignOptions, Wallet};
 use nostr_sdk::prelude::Event;
 use openark_rs::{
     NEW_ROUND_INITIATE, NEW_ROUND_JOIN, NEW_ROUND_PREPARE_START, NEW_ROUND_START,
     NEW_ROUND_START_PREPARED, NEW_ROUND_VTXO_TREE_ACCEPT, NEW_ROUND_VTXO_TREE_PROPOSAL,
-    NewRoundStartPayload, OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION, event_event_reference,
-    event_has_message_type, event_has_event_reference, event_has_message_version,
-    event_is_openark_kind_150,
-    parse_new_round_initiate_payload, parse_new_round_join_payload, parse_new_round_start_payload,
-    parse_new_round_start_prepared_payload,
+    NewRoundStartPayload, OpenArkServiceProvider, OpenArkUser, OutputScriptFactory,
+    ROUND_MESSAGE_VERSION, derive_bip340_xonly_pubkey_from_seed_phrase,
+    derive_master_xprv_base58_from_seed_phrase, event_event_reference, event_has_event_reference,
+    event_has_message_type, event_has_message_version, event_is_openark_kind_150,
+    parse_new_round_initiate_payload, parse_new_round_join_payload,
+    parse_new_round_start_payload, parse_new_round_start_prepared_payload,
     parse_new_round_vtxo_tree_accept_payload, parse_new_round_vtxo_tree_proposal_payload,
-    validate_new_round_prepare_start_event, validate_new_round_start_event, validate_new_round_start_prepared_event,
-    validate_new_round_vtxo_tree_accept_event, validate_new_round_vtxo_tree_proposal_event,
+    print_tx_report, validate_new_round_prepare_start_event, validate_new_round_start_event,
+    validate_new_round_start_prepared_event, validate_new_round_vtxo_tree_accept_event,
+    validate_new_round_vtxo_tree_proposal_event,
 };
+use std::str::FromStr;
 use std::time::Duration;
 mod support;
 use support::{
-    TraceRecorder, canonical_join_payload, canonical_start_prepared_payload,
-    canonical_vtxo_tree_accept_payload, canonical_vtxo_tree_proposal_payload, fund_wallets_two_btc,
-    estimate_tree_proposal_fee_budget_sats, initialize_default_asp_funding_pool,
-    prepare_onboard_utxos_one_btc, start_relay,
+    RegtestFundingHarness, TraceRecorder, canonical_join_payload,
+    canonical_start_prepared_payload, canonical_vtxo_tree_accept_payload,
+    canonical_vtxo_tree_proposal_payload, estimate_tree_proposal_fee_budget_sats,
+    fund_wallets_two_btc, initialize_default_asp_funding_pool, prepare_onboard_utxos_one_btc,
+    start_relay,
 };
 
 const ROUND_ID: &str = "r-2026-02-24-003";
@@ -28,7 +42,11 @@ struct NamedUser {
     user: OpenArkUser,
 }
 
-fn assert_round_event(event: &Event, message_type: &str, round_ref: Option<&nostr_sdk::prelude::EventId>) {
+fn assert_round_event(
+    event: &Event,
+    message_type: &str,
+    round_ref: Option<&nostr_sdk::prelude::EventId>,
+) {
     assert!(event_is_openark_kind_150(event));
     assert!(event_has_message_type(event, message_type));
     if message_type == NEW_ROUND_INITIATE {
@@ -37,6 +55,7 @@ fn assert_round_event(event: &Event, message_type: &str, round_ref: Option<&nost
             .expect("initiate payload should parse");
         assert_eq!(payload.closing_block, 910000);
         assert_eq!(payload.recycled_block, 910144);
+        assert_eq!(payload.leaf_timeout, 10);
     } else if message_type == NEW_ROUND_JOIN {
         let round_ref = round_ref.expect("round ref should be set");
         assert!(event_has_event_reference(event, round_ref));
@@ -72,9 +91,11 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         println!("[{name}] connected with pubkey={}", user.pubkey);
         users.push(NamedUser { name, user });
     }
-    let mut wallets = vec![
-        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
-    ];
+    let mut wallets = vec![(
+        "Steve",
+        provider.wallet_receive_address(),
+        provider.wallet_seed_phrase().to_string(),
+    )];
     for named in &users {
         wallets.push((
             named.name,
@@ -123,7 +144,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     println!("[phase] Round Announcement");
     trace.note("round_announcement", "provider publishing initiate");
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("provider should send new_round_initiate");
     println!("[Steve] published {NEW_ROUND_INITIATE}");
@@ -149,7 +170,11 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         let prepared = prepared_onboard
             .get(named.name)
             .expect("prepared onboard utxo should exist for join sender");
-        let join_payload = canonical_join_payload(named.name, prepared.outpoint.clone());
+        let join_payload = canonical_join_payload(
+            named.name,
+            named.user.round_user_pubkey_hex(),
+            prepared.outpoint.clone(),
+        );
         named
             .user
             .send_new_round_join(round_ref, &join_payload)
@@ -161,19 +186,20 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .await
             .expect("provider should wait for join")
             .expect("provider should receive join");
-        trace.event("Steve", &format!("received join from {}", named.name), &join);
-        assert_round_event(&join, NEW_ROUND_JOIN, Some(round_ref));
-        let join_payload = parse_new_round_join_payload(&join.content)
-            .expect("join payload should parse");
-        assert_eq!(join_payload.onboard.len(), 1);
-        assert_eq!(
-            join_payload.onboard[0].outpoint,
-            prepared.outpoint
+        trace.event(
+            "Steve",
+            &format!("received join from {}", named.name),
+            &join,
         );
+        assert_round_event(&join, NEW_ROUND_JOIN, Some(round_ref));
+        let join_payload =
+            parse_new_round_join_payload(&join.content).expect("join payload should parse");
+        assert_eq!(join_payload.onboard.len(), 1);
+        assert_eq!(join_payload.onboard[0].outpoint, prepared.outpoint);
         assert_eq!(join_payload.offboard.len(), 0);
         assert_eq!(
             join_payload.keys.user_pubkey,
-            format!("{}-user-pubkey", named.name)
+            named.user.round_user_pubkey_hex()
         );
         assert_eq!(
             join_payload.keys.agent_pubkey,
@@ -248,7 +274,7 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
         );
         let parsed_proposal = parse_new_round_vtxo_tree_proposal_payload(&proposal.content)
             .expect("proposal should parse");
-        assert_eq!(parsed_proposal.root_tx, proposal_payload.root_tx);
+        assert_eq!(parsed_proposal.root_psbt, proposal_payload.root_psbt);
         if let Some(existing) = proposal_ref.as_ref() {
             assert_eq!(existing, &proposal.id);
         } else {
@@ -260,7 +286,9 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .user
             .send_new_round_vtxo_tree_accept(
                 round_ref_for_proposal,
-                proposal_ref.as_ref().expect("proposal ref should be present"),
+                proposal_ref
+                    .as_ref()
+                    .expect("proposal ref should be present"),
                 &accept_payload,
             )
             .await
@@ -270,18 +298,26 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .wait_for_new_round_vtxo_tree_accept_event(
                 named.user.pubkey,
                 round_ref_for_proposal,
-                proposal_ref.as_ref().expect("proposal ref should be present"),
+                proposal_ref
+                    .as_ref()
+                    .expect("proposal ref should be present"),
                 Duration::from_secs(10),
             )
             .await
             .expect("provider should wait for accept")
             .expect("provider should receive accept");
-        trace.event("Steve", &format!("received accept from {}", named.name), &accept);
+        trace.event(
+            "Steve",
+            &format!("received accept from {}", named.name),
+            &accept,
+        );
         assert!(
             validate_new_round_vtxo_tree_accept_event(
                 &accept,
                 round_ref_for_proposal,
-                proposal_ref.as_ref().expect("proposal ref should be present"),
+                proposal_ref
+                    .as_ref()
+                    .expect("proposal ref should be present"),
             )
             .is_ok()
         );
@@ -299,7 +335,9 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     provider
         .send_new_round_prepare_start(
             round_ref_for_prepare,
-            proposal_ref.as_ref().expect("proposal ref should be present"),
+            proposal_ref
+                .as_ref()
+                .expect("proposal ref should be present"),
         )
         .await
         .expect("provider should send prepare_start");
@@ -312,7 +350,9 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .wait_for_new_round_prepare_start_event(
                 provider.pubkey,
                 round_ref_for_prepare,
-                proposal_ref.as_ref().expect("proposal ref should be present"),
+                proposal_ref
+                    .as_ref()
+                    .expect("proposal ref should be present"),
                 Duration::from_secs(10),
             )
             .await
@@ -328,7 +368,9 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             validate_new_round_prepare_start_event(
                 &prepare_start,
                 round_ref_for_prepare,
-                proposal_ref.as_ref().expect("proposal ref should be present"),
+                proposal_ref
+                    .as_ref()
+                    .expect("proposal ref should be present"),
             )
             .is_ok()
         );
@@ -344,7 +386,9 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .user
             .send_new_round_start_prepared(
                 round_ref_for_prepare,
-                prepare_start_ref.as_ref().expect("prepare_start ref should be present"),
+                prepare_start_ref
+                    .as_ref()
+                    .expect("prepare_start ref should be present"),
                 &prepared_payload,
             )
             .await
@@ -354,7 +398,9 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             .wait_for_new_round_start_prepared_event(
                 named.user.pubkey,
                 round_ref_for_prepare,
-                prepare_start_ref.as_ref().expect("prepare_start ref should be present"),
+                prepare_start_ref
+                    .as_ref()
+                    .expect("prepare_start ref should be present"),
                 Duration::from_secs(10),
             )
             .await
@@ -374,7 +420,9 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             validate_new_round_start_prepared_event(
                 &prepared,
                 round_ref_for_prepare,
-                prepare_start_ref.as_ref().expect("prepare_start ref should be present"),
+                prepare_start_ref
+                    .as_ref()
+                    .expect("prepare_start ref should be present"),
             )
             .is_ok()
         );
@@ -400,7 +448,11 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     for named in &users {
         let start = named
             .user
-            .wait_for_new_round_start_event(provider.pubkey, round_ref.as_ref().expect("round ref should be present"), Duration::from_secs(10))
+            .wait_for_new_round_start_event(
+                provider.pubkey,
+                round_ref.as_ref().expect("round ref should be present"),
+                Duration::from_secs(10),
+            )
             .await
             .expect("user should wait for round_start")
             .expect("user should receive round_start");
@@ -410,8 +462,8 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             NEW_ROUND_START,
             Some(round_ref.as_ref().expect("round ref should be present")),
         );
-        let parsed_start = parse_new_round_start_payload(&start.content)
-            .expect("start payload should parse");
+        let parsed_start =
+            parse_new_round_start_payload(&start.content).expect("start payload should parse");
         assert_eq!(parsed_start.round_tx, "BASE64_SIGNED_ROOT_TX_003");
         activated_receipts += 1;
     }
@@ -448,7 +500,220 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
     );
 
     println!(
-        "[test] final state: round activated with {} users (Alice, Bob, Carol, Dave, Eve)",
+        "[test] round protocol complete with {} users — beginning unilateral exit phase",
+        users.len()
+    );
+
+    // ── Constants for exit ──────────────────────────────────────────────
+    const LEAF_FUND_SATS: u64 = 50_000_000; // 0.5 BTC per user
+    const EXIT_FEE_SATS: u64 = 20_000;
+    const LEAF_TIMEOUT: u32 = 10;
+    let exit_amount = LEAF_FUND_SATS
+        .checked_sub(EXIT_FEE_SATS)
+        .expect("leaf funds should cover exit fee");
+
+    // ── Start persistent bitcoind harness ────────────────────────────────
+    println!("[exit] starting regtest harness for unilateral exits");
+    let harness = RegtestFundingHarness::start().await;
+    let miner_address = harness.get_new_miner_address().await;
+    harness.mine_blocks(101, &miner_address).await;
+
+    // ── Derive Steve's (ASP) x-only pubkey ──────────────────────────────
+    let steve_xonly_hex =
+        derive_bip340_xonly_pubkey_from_seed_phrase(&provider.wallet_seed_phrase());
+    let steve_xonly =
+        XOnlyPublicKey::from_str(&steve_xonly_hex).expect("steve xonly should parse");
+    println!("[exit] steve_xonly={steve_xonly_hex}");
+
+    // ── Per-user: build leaf, fund, sign exit, collect hex ───────────────
+    struct UserExitData {
+        name: &'static str,
+        leaf_address: String,
+        receive_address: String,
+        exit_hex: String,
+    }
+
+    let secp = Secp256k1::new();
+    let factory = OutputScriptFactory::new(910144, LEAF_TIMEOUT);
+    let mut exit_data: Vec<UserExitData> = Vec::new();
+
+    for named in &users {
+        let name = named.name;
+        let user_xonly_hex = named.user.round_user_pubkey_hex();
+        let user_xprv_base58 =
+            derive_master_xprv_base58_from_seed_phrase(&named.user.wallet_seed_phrase());
+        let user_xonly =
+            XOnlyPublicKey::from_str(&user_xonly_hex).expect("user xonly should parse");
+        println!("[exit:{name}] user_xonly={user_xonly_hex}");
+
+        // Derive account-level xprv/xpub for BDK key expressions.
+        let master = Xpriv::from_str(&user_xprv_base58)
+            .expect("user master xprv should parse");
+        let account_path =
+            DerivationPath::from_str("m/86h/1h/0h").expect("valid derivation path");
+        let account_xprv = master
+            .derive_priv(&secp, &account_path)
+            .expect("account-level derivation should succeed");
+        let account_xpub = Xpub::from_priv(&secp, &account_xprv);
+        let priv_keyexpr = format!("{account_xprv}/0/0");
+        let pub_keyexpr = format!("{account_xpub}/0/0");
+
+        // Build BDK descriptors.
+        let leaf_sign_desc = format!(
+            "tr({steve_xonly_hex},{{multi_a(2,{pub_keyexpr},{steve_xonly_hex}),and_v(v:older({LEAF_TIMEOUT}),pk({priv_keyexpr}))}})"
+        );
+        let leaf_watch_desc = format!(
+            "tr({steve_xonly_hex},{{multi_a(2,{pub_keyexpr},{steve_xonly_hex}),and_v(v:older({LEAF_TIMEOUT}),pk({pub_keyexpr}))}})"
+        );
+
+        let mut wallet_leaf_sign = Wallet::create_single(leaf_sign_desc)
+            .network(Network::Regtest)
+            .create_wallet_no_persist()
+            .expect("leaf signing wallet descriptor should be valid");
+        let mut wallet_leaf_watch = Wallet::create_single(leaf_watch_desc)
+            .network(Network::Regtest)
+            .create_wallet_no_persist()
+            .expect("leaf watch wallet descriptor should be valid");
+
+        wallet_leaf_sign.reveal_next_address(KeychainKind::External);
+        let leaf_address = wallet_leaf_watch
+            .reveal_next_address(KeychainKind::External)
+            .address;
+
+        // Verify address matches OutputScriptFactory.
+        let factory_spec = factory
+            .create_leaf_output(user_xonly, steve_xonly)
+            .expect("create_leaf_output should succeed");
+        assert_eq!(
+            factory_spec.script_pubkey,
+            leaf_address.script_pubkey(),
+            "OutputScriptFactory and BDK descriptor must match for {name}"
+        );
+        println!("[exit:{name}] leaf_address={leaf_address} (factory match confirmed)");
+
+        // Fund the leaf output.
+        let leaf_address_str = leaf_address.to_string();
+        let leaf_fund_btc = LEAF_FUND_SATS as f64 / 100_000_000.0;
+        harness
+            .send_to_address(&leaf_address_str, leaf_fund_btc)
+            .await;
+        harness.mine_blocks(1, &miner_address).await;
+
+        let (leaf_txid, leaf_vout, leaf_sats) =
+            harness.scan_address_utxo(&leaf_address_str).await;
+        assert_eq!(
+            leaf_sats, LEAF_FUND_SATS,
+            "{name} leaf output should be funded with 0.5 BTC"
+        );
+        println!("[exit:{name}] leaf funded: txid={leaf_txid} vout={leaf_vout} sats={leaf_sats}");
+
+        // Build user's receive address.
+        let mut user_wallet = openark_rs::create_regtest_bdk_wallet_from_seed_phrase(
+            &named.user.wallet_seed_phrase(),
+        );
+        let receive_address = user_wallet
+            .reveal_next_address(KeychainKind::External)
+            .address;
+        let receive_spk = receive_address.script_pubkey();
+
+        // Build and sign exit PSBT.
+        let exit_tx = Transaction {
+            version: transaction::Version(2),
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::from_str(&leaf_txid).expect("valid leaf txid"),
+                    vout: leaf_vout as u32,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence(LEAF_TIMEOUT),
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(exit_amount),
+                script_pubkey: receive_spk,
+            }],
+        };
+
+        let mut exit_psbt =
+            Psbt::from_unsigned_tx(exit_tx).expect("unsigned exit tx should create PSBT");
+        exit_psbt.inputs[0].witness_utxo = Some(TxOut {
+            value: Amount::from_sat(LEAF_FUND_SATS),
+            script_pubkey: leaf_address.script_pubkey(),
+        });
+        print_tx_report(&format!("exit:{name}/unsigned"), &exit_psbt.unsigned_tx);
+
+        let exit_finalized = wallet_leaf_sign
+            .sign(
+                &mut exit_psbt,
+                SignOptions {
+                    trust_witness_utxo: true,
+                    try_finalize: true,
+                    ..Default::default()
+                },
+            )
+            .expect("exit PSBT signing should succeed");
+        assert!(
+            exit_finalized,
+            "{name} exit PSBT should finalize with timeout path key"
+        );
+
+        let exit_final_tx = exit_psbt.extract_tx().expect("exit extract tx");
+        print_tx_report(&format!("exit:{name}/final"), &exit_final_tx);
+        let exit_hex = serialize_hex(&exit_final_tx);
+
+        // Pre-timeout: broadcast must fail.
+        let pre_timeout = harness.try_broadcast_raw_tx(&exit_hex).await;
+        assert!(
+            pre_timeout.is_err(),
+            "{name} pre-timeout broadcast must be rejected as non-final"
+        );
+        println!("[exit:{name}] pre-timeout correctly rejected");
+
+        exit_data.push(UserExitData {
+            name,
+            leaf_address: leaf_address_str,
+            receive_address: receive_address.to_string(),
+            exit_hex,
+        });
+    }
+
+    // ── Mine blocks to satisfy CSV for all users ────────────────────────
+    println!("[exit] mining {LEAF_TIMEOUT} blocks to satisfy CSV for all users");
+    harness
+        .mine_blocks(LEAF_TIMEOUT as u64, &miner_address)
+        .await;
+
+    // ── Broadcast all exit transactions ─────────────────────────────────
+    let mut exit_results: Vec<serde_json::Value> = Vec::new();
+    for data in &exit_data {
+        let exit_txid = harness.broadcast_raw_tx(&data.exit_hex).await;
+        println!("[exit:{}] exit tx broadcast: txid={exit_txid}", data.name);
+        exit_results.push(serde_json::json!({
+            "name": data.name,
+            "exit_txid": exit_txid,
+            "leaf_address": data.leaf_address,
+            "receive_address": data.receive_address,
+        }));
+    }
+
+    // ── Confirm and verify all users received funds ─────────────────────
+    harness.mine_blocks(1, &miner_address).await;
+    for data in &exit_data {
+        let received_sats = harness.scan_address_total_sats(&data.receive_address).await;
+        assert_eq!(
+            received_sats, exit_amount,
+            "{} should receive LEAF_FUND_SATS - EXIT_FEE_SATS after unilateral exit",
+            data.name
+        );
+        println!(
+            "[exit:{}] received {received_sats} sats at {} (expected {exit_amount})",
+            data.name, data.receive_address
+        );
+    }
+
+    println!(
+        "[test] all {} users verified unilateral exit via CSV timeout path",
         users.len()
     );
     println!("[test] step3_multi_actor_kind150_full_phase_flow passed");
@@ -458,7 +723,9 @@ async fn step3_multi_actor_kind150_full_phase_flow() {
             "announcement_joins": announcement_joins,
             "tree_accepts": tree_accepts,
             "prepared_signals": prepared_signals,
-            "activated_receipts": activated_receipts
+            "activated_receipts": activated_receipts,
+            "exit_results": exit_results,
+            "exit_amount_sats": exit_amount,
         }),
     );
 }

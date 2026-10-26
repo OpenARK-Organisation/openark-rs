@@ -1,9 +1,9 @@
 use openark_rs::{
-    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, OpenArkServiceProvider, OpenArkUser, event_event_reference,
-    event_has_message_type, event_has_event_reference, event_has_message_version,
-    event_is_openark_kind_150,
-    parse_new_round_initiate_payload, parse_new_round_join_payload, validate_new_round_initiate_event,
-    validate_new_round_join_event_reference, ROUND_MESSAGE_VERSION,
+    NEW_ROUND_INITIATE, NEW_ROUND_JOIN, OpenArkServiceProvider, OpenArkUser, ROUND_MESSAGE_VERSION,
+    event_event_reference, event_has_event_reference, event_has_message_type,
+    event_has_message_version, event_is_openark_kind_150, parse_new_round_initiate_payload,
+    parse_new_round_join_payload, validate_new_round_initiate_event,
+    validate_new_round_join_event_reference,
 };
 use std::time::Duration;
 mod support;
@@ -30,9 +30,18 @@ async fn step1_two_actor_kind150_round_handshake() {
         .expect("user should connect");
     println!("[Alice] connected with pubkey={}", user.pubkey);
     fund_wallets_two_btc(&[
-        ("Steve", provider.wallet_receive_address(), provider.wallet_seed_phrase().to_string()),
-        ("Alice", user.wallet_receive_address(), user.wallet_seed_phrase().to_string()),
-    ]).await;
+        (
+            "Steve",
+            provider.wallet_receive_address(),
+            provider.wallet_seed_phrase().to_string(),
+        ),
+        (
+            "Alice",
+            user.wallet_receive_address(),
+            user.wallet_seed_phrase().to_string(),
+        ),
+    ])
+    .await;
     let prepared_onboard = prepare_onboard_utxos_one_btc(
         &mut trace,
         &[(
@@ -51,7 +60,7 @@ async fn step1_two_actor_kind150_round_handshake() {
     println!("[test] clients settled, starting handshake flow");
     println!("[Steve] publishing {NEW_ROUND_INITIATE} round_id={ROUND_ID}");
     provider
-        .send_new_round_initiate(910000, 910144)
+        .send_new_round_initiate(910000, 910144, 10)
         .await
         .expect("provider should send new_round_initiate");
     println!("[Steve] published {NEW_ROUND_INITIATE}");
@@ -71,15 +80,20 @@ async fn step1_two_actor_kind150_round_handshake() {
         validate_new_round_initiate_event(&initiate).is_ok(),
         "initiate event should pass strict validator"
     );
-    let initiate_payload = parse_new_round_initiate_payload(&initiate.content)
-        .expect("initiate payload should parse");
+    let initiate_payload =
+        parse_new_round_initiate_payload(&initiate.content).expect("initiate payload should parse");
     assert_eq!(initiate_payload.closing_block, 910000);
     assert_eq!(initiate_payload.recycled_block, 910144);
+    assert_eq!(initiate_payload.leaf_timeout, 10);
     let round_ref = initiate.id;
     println!("[round] reference={round_ref}");
 
     println!("[Alice] publishing {NEW_ROUND_JOIN} round_id={ROUND_ID}");
-    let join_payload = canonical_join_payload("Alice", alice_onboard.outpoint.clone());
+    let join_payload = canonical_join_payload(
+        "Alice",
+        user.round_user_pubkey_hex(),
+        alice_onboard.outpoint.clone(),
+    );
     user.send_new_round_join(&round_ref, &join_payload)
         .await
         .expect("user should send new_round_join");
@@ -109,7 +123,7 @@ async fn step1_two_actor_kind150_round_handshake() {
     assert_eq!(join_payload.onboard.len(), 1);
     assert_eq!(join_payload.onboard[0].outpoint, alice_onboard.outpoint);
     assert_eq!(join_payload.offboard.len(), 0);
-    assert_eq!(join_payload.keys.user_pubkey, "Alice-user-pubkey");
+    assert_eq!(join_payload.keys.user_pubkey, user.round_user_pubkey_hex());
     assert_eq!(join_payload.keys.agent_pubkey, "Alice-agent-pubkey");
     println!("[test] step1_two_actor_kind150_round_handshake passed");
     trace.finish(
